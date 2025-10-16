@@ -28,12 +28,19 @@ def listar_pedidos_pendentes(data_inicio=None, data_fim=None):
         url += f"&endDate={data_fim}"
 
     r = requests.get(url, headers=headers)
+    
+    # DEBUG completo da resposta
+    print("=== DEBUG listar_pedidos_pendentes ===")
+    print("URL:", url)
+    print("Status Code:", r.status_code)
+    print("Response Text:", r.text)
+    
     if r.status_code == 200:
         data = r.json()
-        pedidos_filtrados = [p for p in data["results"] if not p["authorized"]]
+        pedidos_filtrados = [p for p in data.get("results", []) if not p.get("authorized", False)]
         print(f"\n🔎 {len(pedidos_filtrados)} pedidos pendentes e não autorizados encontrados.\n")
         for pedido in pedidos_filtrados:
-            print(f"🆔 ID: {pedido['id']} | Status: {pedido['status']} | Data: {pedido['date']} | Autorizado: {pedido['authorized']}")
+            print(f"🆔 ID: {pedido.get('id')} | Status: {pedido.get('status')} | Data: {pedido.get('date')} | Autorizado: {pedido.get('authorized')}")
         return pedidos_filtrados
     else:
         print(f"❌ Erro ao buscar pedidos: {r.status_code} - {r.text}")
@@ -43,6 +50,13 @@ def itens_pedido(purchase_order_id):
     """Consulta itens de um pedido"""
     url = f"{BASE_URL}/purchase-orders/{purchase_order_id}/items"
     r = requests.get(url, headers=headers)
+    
+    # DEBUG completo da resposta
+    print("=== DEBUG itens_pedido ===")
+    print("URL:", url)
+    print("Status Code:", r.status_code)
+    print("Response Text:", r.text)
+    
     if r.status_code == 200:
         data = r.json()
         print(f"\nItens do pedido {purchase_order_id}:")
@@ -60,13 +74,20 @@ def autorizar_pedido(purchase_order_id, observacao=None):
     """Autoriza pedido de compra"""
     url = f"{BASE_URL}/purchase-orders/{purchase_order_id}/authorize"
     body = {}
+    method = requests.post
     if observacao:
         body["observation"] = observacao
         method = requests.patch
-    else:
-        method = requests.post
 
     r = method(url, headers=headers, json=body)
+
+    # DEBUG completo
+    print("=== DEBUG autorizar_pedido ===")
+    print("URL:", url)
+    print("Body:", body)
+    print("Status Code:", r.status_code)
+    print("Response Text:", r.text)
+    
     if r.status_code in [200, 204]:
         print(f"✅ Pedido {purchase_order_id} autorizado com sucesso!")
     else:
@@ -76,80 +97,21 @@ def reprovar_pedido(purchase_order_id, observacao=None):
     """Reprova pedido de compra"""
     url = f"{BASE_URL}/purchase-orders/{purchase_order_id}/disapprove"
     body = {}
+    method = requests.post
     if observacao:
         body["observation"] = observacao
         method = requests.patch
-    else:
-        method = requests.post
 
     r = method(url, headers=headers, json=body)
+
+    # DEBUG completo
+    print("=== DEBUG reprovar_pedido ===")
+    print("URL:", url)
+    print("Body:", body)
+    print("Status Code:", r.status_code)
+    print("Response Text:", r.text)
+    
     if r.status_code in [200, 204]:
         print(f"🚫 Pedido {purchase_order_id} reprovado com sucesso!")
     else:
         print(f"❌ Erro ao reprovar pedido: {r.status_code} - {r.text}")
-
-# === INTERPRETAÇÃO DE COMANDOS ===
-
-def interpretar_comando(comando):
-    comando = comando.lower().strip()
-
-    if comando.startswith("pedidos pendentes"):
-        partes = comando.split("de")
-        data_inicio, data_fim = None, None
-        if len(partes) > 1:
-            try:
-                datas = partes[1].split("a")
-                data_inicio = datetime.strptime(datas[0].strip(), "%d/%m/%Y").strftime("%Y-%m-%d")
-                data_fim = datetime.strptime(datas[1].strip(), "%d/%m/%Y").strftime("%Y-%m-%d")
-            except:
-                pass
-        listar_pedidos_pendentes(data_inicio, data_fim)
-
-    elif comando.startswith("itens do pedido"):
-        try:
-            pid = int(comando.split()[-1])
-            itens_pedido(pid)
-        except:
-            print("❌ Comando inválido. Ex: 'Itens do pedido 285'")
-
-    elif comando.startswith("autorizar o pedido"):
-        try:
-            parts = comando.split("com observação")
-            pid = int(parts[0].split()[-1])
-            obs = parts[1].strip() if len(parts) > 1 else None
-            autorizar_pedido(pid, obs)
-        except:
-            print("❌ Comando inválido. Ex: 'Autorizar o pedido 285 com observação Teste'")
-
-    elif comando.startswith("reprovar o pedido"):
-        try:
-            parts = comando.split("com observação")
-            pid = int(parts[0].split()[-1])
-            obs = parts[1].strip() if len(parts) > 1 else None
-            reprovar_pedido(pid, obs)
-        except:
-            print("❌ Comando inválido. Ex: 'Reprovar o pedido 281'")
-
-    elif comando in ["sair", "exit"]:
-        print("Encerrando...")
-        exit()
-
-    else:
-        print("❌ Comando não reconhecido.")
-
-def processar_comandos(comandos):
-    for cmd in comandos:
-        interpretar_comando(cmd)
-
-# === LOOP PRINCIPAL PARA TESTES ===
-if __name__ == "__main__":
-    print("Bem-vindo ao sistema IA-Sienge Avançado!")
-    print("Digite um comando ou 'sair' para encerrar. Ex.:")
-    print("- Pedidos pendentes de 01/07/2025 a 31/08/2025")
-    print("- Itens do pedido 285")
-    print("- Autorizar o pedido 285 com observação Teste")
-    print("- Reprovar o pedido 281")
-
-    while True:
-        comandos = input("\n> ").split(";")
-        processar_comandos([c.strip() for c in comandos])
