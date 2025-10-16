@@ -21,7 +21,7 @@ headers = {
 # === FUNÇÕES ===
 
 def listar_pedidos_pendentes(data_inicio=None, data_fim=None):
-    """Consulta pedidos de compra pendentes"""
+    """Consulta pedidos de compra pendentes e não autorizados"""
     url = f"{BASE_URL}/purchase-orders?status=PENDING"
     if data_inicio:
         url += f"&startDate={data_inicio}"
@@ -31,10 +31,7 @@ def listar_pedidos_pendentes(data_inicio=None, data_fim=None):
     r = requests.get(url, headers=headers)
     if r.status_code == 200:
         data = r.json()
-        pedidos_filtrados = [
-            p for p in data["results"] if not p["authorized"]
-        ]
-        print(f"\n🔎 {len(pedidos_filtrados)} pedidos pendentes e não autorizados encontrados.\n")
+        pedidos_filtrados = [p for p in data["results"] if not p["authorized"]]
         for pedido in pedidos_filtrados:
             print(f"🆔 ID: {pedido['id']} | Status: {pedido['status']} | Data: {pedido['date']} | Autorizado: {pedido['authorized']}")
         return pedidos_filtrados
@@ -48,9 +45,7 @@ def itens_pedido(purchase_order_id):
     r = requests.get(url, headers=headers)
     if r.status_code == 200:
         data = r.json()
-        print(f"\nItens do pedido {purchase_order_id}:")
         for item in data.get("results", []):
-            # Usando get() para evitar KeyError
             descricao = item.get("itemDescription") or item.get("description") or "Sem descrição"
             quantidade = item.get("quantity", 0)
             valor = item.get("totalAmount", 0.0)
@@ -92,12 +87,11 @@ def reprovar_pedido(purchase_order_id, observacao=None):
     else:
         print(f"❌ Erro ao reprovar pedido: {r.status_code} - {r.text}")
 
-# === INTERPRETAÇÃO DE COMANDOS ===
+# === INTERPRETAÇÃO DE COMANDOS (para teste standalone) ===
+
 def interpretar_comando(comando):
     comando = comando.lower().strip()
-
     if comando.startswith("pedidos pendentes"):
-        # extrair datas se houver
         partes = comando.split("de")
         data_inicio, data_fim = None, None
         if len(partes) > 1:
@@ -155,5 +149,5 @@ if __name__ == "__main__":
     print("- Reprovar o pedido 281")
 
     while True:
-        comandos = input("\n> ").split(";")  # permite múltiplos comandos separados por ;
+        comandos = input("\n> ").split(";")  # múltiplos comandos separados por ;
         processar_comandos([c.strip() for c in comandos])
