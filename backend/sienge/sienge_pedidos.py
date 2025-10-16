@@ -61,7 +61,8 @@ def itens_pedido(purchase_order_id):
         data = r.json()
         print(f"\nItens do pedido {purchase_order_id}:")
         for item in data.get("results", []):
-            descricao = item.get("itemDescription") or item.get("description") or "Sem descrição"
+            # CORREÇÃO: usar resourceDescription primeiro
+            descricao = item.get("resourceDescription") or item.get("itemDescription") or item.get("description") or "Sem descrição"
             quantidade = item.get("quantity", 0)
             valor = item.get("totalAmount", 0.0)
             print(f"Item {item.get('itemNumber', '?')}: {descricao} | Quantidade: {quantidade} | Valor: {valor}")
