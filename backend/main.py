@@ -6,7 +6,7 @@ import os
 from datetime import datetime
 
 # Importando funções do módulo Sienge
-from sienge_pedidos import (
+from sienge.sienge_pedidos import (
     listar_pedidos_pendentes,
     itens_pedido,
     autorizar_pedido,
