@@ -6,7 +6,7 @@ import os
 from datetime import datetime
 
 # Importando funções do módulo Sienge
-from sienge.sienge_pedidos import (
+from sienge_pedidos import (
     listar_pedidos_pendentes,
     itens_pedido,
     autorizar_pedido,
@@ -42,8 +42,8 @@ def processar_comando_sienge(texto: str):
             partes = texto.split("de")
             data_inicio, data_fim = None, None
             if len(partes) > 1:
+                datas = partes[1].split("a")
                 try:
-                    datas = partes[1].split("a")
                     data_inicio = datetime.strptime(datas[0].strip(), "%d/%m/%Y").strftime("%Y-%m-%d")
                     data_fim = datetime.strptime(datas[1].strip(), "%d/%m/%Y").strftime("%Y-%m-%d")
                 except Exception as e:
@@ -51,13 +51,10 @@ def processar_comando_sienge(texto: str):
 
             pedidos = listar_pedidos_pendentes(data_inicio, data_fim)
             if pedidos:
-                return "\n".join([
-                    f"ID: {p['id']} | Status: {p['status']} | Data: {p['date']} | Autorizado: {p['authorized']}"
-                    for p in pedidos
-                ])
+                return "\n".join([f"ID: {p['id']} | Status: {p['status']} | Data: {p['date']}" for p in pedidos])
             return "Nenhum pedido pendente encontrado."
 
-        # ===== Itens de pedido =====
+        # ===== Itens do pedido =====
         elif texto.startswith("itens do pedido"):
             try:
                 pid = int(texto.split()[-1])
@@ -67,7 +64,7 @@ def processar_comando_sienge(texto: str):
             itens = itens_pedido(pid)
             if itens:
                 return "\n".join([
-                    f"Item {i.get('itemNumber','?')}: {i.get('itemDescription') or i.get('description','Sem descrição')} | Quantidade: {i.get('quantity',0)} | Valor: {i.get('totalAmount',0.0)}"
+                    f"Item {i.get('itemNumber','?')}: {i.get('resourceDescription') or i.get('itemDescription') or i.get('description','Sem descrição')} | Quantidade: {i.get('quantity',0)} | Valor: {i.get('unitPrice') or i.get('totalAmount',0.0)}"
                     for i in itens
                 ])
             return "Nenhum item encontrado."
@@ -94,7 +91,6 @@ def processar_comando_sienge(texto: str):
             reprovar_pedido(pid, obs)
             return f"🚫 Pedido {pid} reprovado com sucesso!"
 
-        # ===== Comando não reconhecido =====
         else:
             return None  # Não é comando Sienge
 
