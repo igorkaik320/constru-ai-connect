@@ -1,4 +1,4 @@
-export const BACKEND_URL = "https://constru-ai-connect.onrender.com/";
+export const BACKEND_URL = "https://constru-ai-connect.onrender.com";
 
 export async function sendMessageToBackend(user: string, text: string) {
   try {
