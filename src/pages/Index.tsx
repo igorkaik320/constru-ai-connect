@@ -4,6 +4,7 @@ import { ChatInput } from "@/components/ChatInput";
 import { ChatHeader } from "@/components/ChatHeader";
 import { useToast } from "@/hooks/use-toast";
 import { Loader2 } from "lucide-react";
+import { sendMessageToBackend } from "@/backendClient";
 
 interface Message {
   role: "user" | "assistant";
@@ -34,29 +35,11 @@ const Index = () => {
     setIsLoading(true);
 
     try {
-      const response = await fetch(
-        "https://omni-ai-nexus-20.onrender.com/mensagem",
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            user: "usuário",
-            text: text,
-          }),
-        }
-      );
-
-      if (!response.ok) {
-        throw new Error("Erro na comunicação com o servidor");
-      }
-
-      const data = await response.json();
+      const response = await sendMessageToBackend("usuário", text);
 
       const aiMessage: Message = {
         role: "assistant",
-        content: data.response || "Desculpe, não consegui gerar uma resposta.",
+        content: response,
       };
 
       setMessages((prev) => [...prev, aiMessage]);
