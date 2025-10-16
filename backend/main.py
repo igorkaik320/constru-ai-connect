@@ -42,15 +42,23 @@ def processar_comando_sienge(texto: str):
             data_inicio, data_fim = None, None
             if len(partes) > 1:
                 datas = partes[1].split("a")
-                data_inicio = datetime.strptime(datas[0].strip(), "%d/%m/%Y").strftime("%Y-%m-%d")
-                data_fim = datetime.strptime(datas[1].strip(), "%d/%m/%Y").strftime("%Y-%m-%d")
+                try:
+                    data_inicio = datetime.strptime(datas[0].strip(), "%d/%m/%Y").strftime("%Y-%m-%d")
+                    data_fim = datetime.strptime(datas[1].strip(), "%d/%m/%Y").strftime("%Y-%m-%d")
+                except Exception as e:
+                    return f"❌ Formato de data inválido. Use dd/mm/yyyy. Detalhes: {e}"
+
             pedidos = listar_pedidos_pendentes(data_inicio, data_fim)
             if pedidos:
                 return "\n".join([f"ID: {p['id']} | Status: {p['status']} | Data: {p['date']}" for p in pedidos])
             return "Nenhum pedido pendente encontrado."
 
         elif texto.startswith("itens do pedido"):
-            pid = int(texto.split()[-1])
+            try:
+                pid = int(texto.split()[-1])
+            except:
+                return "❌ ID do pedido inválido."
+
             itens = itens_pedido(pid)
             if itens:
                 return "\n".join([
@@ -61,14 +69,20 @@ def processar_comando_sienge(texto: str):
 
         elif texto.startswith("autorizar o pedido"):
             parts = texto.split("com observação")
-            pid = int(parts[0].split()[-1])
+            try:
+                pid = int(parts[0].split()[-1])
+            except:
+                return "❌ ID do pedido inválido."
             obs = parts[1].strip() if len(parts) > 1 else None
             autorizar_pedido(pid, obs)
             return f"✅ Pedido {pid} autorizado com sucesso!"
 
         elif texto.startswith("reprovar o pedido"):
             parts = texto.split("com observação")
-            pid = int(parts[0].split()[-1])
+            try:
+                pid = int(parts[0].split()[-1])
+            except:
+                return "❌ ID do pedido inválido."
             obs = parts[1].strip() if len(parts) > 1 else None
             reprovar_pedido(pid, obs)
             return f"🚫 Pedido {pid} reprovado com sucesso!"
@@ -83,6 +97,9 @@ def processar_comando_sienge(texto: str):
 @app.post("/mensagem")
 async def message_endpoint(msg: Message):
     print(f"📩 Mensagem recebida: {msg.user} -> {msg.text}")
+
+    # Debug do token (apenas para testes, depois pode remover)
+    # print("DEBUG: Token Sienge =", b64encode(f"{usuario}:{senha}".encode()).decode())
 
     # Tentar processar comando Sienge primeiro
     resposta_sienge = processar_comando_sienge(msg.text)
