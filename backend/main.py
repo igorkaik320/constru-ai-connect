@@ -1,3 +1,5 @@
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 import requests
 from base64 import b64encode
 import logging
@@ -20,7 +22,18 @@ headers = {
 # Configura logging
 logging.basicConfig(level=logging.INFO)
 
-# === FUNÇÕES ===
+# === CRIAR APP FASTAPI ===
+app = FastAPI()
+
+# Permitir CORS se for chamar de frontend
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"]
+)
+
+# === FUNÇÕES INTERNAS (sienge) ===
 
 def listar_pedidos_pendentes(data_inicio=None, data_fim=None):
     url = f"{BASE_URL}/purchase-orders?status=PENDING"
@@ -65,19 +78,6 @@ def gerar_relatorio_pdf_bytes(purchase_order_id):
         return r.content
     return None
 
-def gerar_relatorio_pdf(purchase_order_id):
-    conteudo = gerar_relatorio_pdf_bytes(purchase_order_id)
-    if conteudo:
-        filename = f"relatorio_pedido_{purchase_order_id}.pdf"
-        with open(filename, "wb") as f:
-            f.write(conteudo)
-        logging.info(f"PDF gerado: {filename}")
-        return filename
-    logging.warning(f"Não foi possível gerar PDF para o pedido {purchase_order_id}")
-    return None
-
-# === NOVOS ENDPOINTS ===
-
 def buscar_pedido_por_id(purchase_order_id):
     url = f"{BASE_URL}/purchase-orders/{purchase_order_id}"
     r = requests.get(url, headers=headers)
@@ -102,3 +102,45 @@ def listar_pedidos_por_periodo(data_inicio, data_fim):
     if r.status_code == 200:
         return r.json().get("results", [])
     return []
+
+# === ROTAS FASTAPI ===
+
+@app.get("/pedidos/pendentes")
+def api_listar_pedidos_pendentes(data_inicio: str = None, data_fim: str = None):
+    return listar_pedidos_pendentes(data_inicio, data_fim)
+
+@app.get("/pedidos/{purchase_order_id}/itens")
+def api_itens_pedido(purchase_order_id: str):
+    return itens_pedido(purchase_order_id)
+
+@app.put("/pedidos/{purchase_order_id}/autorizar")
+def api_autorizar_pedido(purchase_order_id: str, observacao: str = None):
+    sucesso = autorizar_pedido(purchase_order_id, observacao)
+    return {"sucesso": sucesso}
+
+@app.put("/pedidos/{purchase_order_id}/reprovar")
+def api_reprovar_pedido(purchase_order_id: str, observacao: str = None):
+    sucesso = reprovar_pedido(purchase_order_id, observacao)
+    return {"sucesso": sucesso}
+
+@app.get("/pedidos/{purchase_order_id}/pdf")
+def api_gerar_pdf(purchase_order_id: str):
+    conteudo = gerar_relatorio_pdf_bytes(purchase_order_id)
+    if conteudo:
+        return {"pdf_bytes": b64encode(conteudo).decode()}  # Retorna base64
+    return {"erro": "Não foi possível gerar PDF"}
+
+@app.get("/pedidos/{purchase_order_id}")
+def api_buscar_pedido_por_id(purchase_order_id: str):
+    pedido = buscar_pedido_por_id(purchase_order_id)
+    if pedido:
+        return pedido
+    return {"erro": "Pedido não encontrado"}
+
+@app.get("/pedidos/usuario/{usuario_nome}")
+def api_listar_por_usuario(usuario_nome: str):
+    return listar_pedidos_por_usuario(usuario_nome)
+
+@app.get("/pedidos/periodo")
+def api_listar_por_periodo(data_inicio: str, data_fim: str):
+    return listar_pedidos_por_periodo(data_inicio, data_fim)
