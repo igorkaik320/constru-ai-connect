@@ -4,10 +4,8 @@ from pydantic import BaseModel
 import os
 import json
 import logging
-from base64 import b64encode
-import requests
 
-# Importar funções Sienge
+# Importar funções do módulo sienge_pedidos
 from sienge.sienge_pedidos import (
     listar_pedidos_pendentes,
     itens_pedido,
@@ -17,12 +15,12 @@ from sienge.sienge_pedidos import (
     buscar_pedido_por_id
 )
 
-# === CONFIGURAÇÕES ===
+# Configuração de logging
 logging.basicConfig(level=logging.INFO)
 
 app = FastAPI()
 
-# Permitir CORS
+# CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -31,12 +29,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# === Modelo de mensagem ===
+# Modelo de mensagem
 class Message(BaseModel):
     user: str
     text: str
 
-# === Formatar itens do pedido para exibir no chat ===
+# === Formatar itens do pedido ===
 def formatar_itens(itens):
     if not itens:
         return "Nenhum item encontrado."
@@ -55,7 +53,7 @@ def formatar_itens(itens):
     linhas.append(f"Total: {total:.2f}")
     return "\n".join(linhas)
 
-# === Função IA para entender intenção ===
+# === Função IA (OpenAI) para interpretar intenções ===
 def entender_intencao(texto: str):
     import openai
     openai.api_key = os.getenv("OPENAI_API_KEY")
@@ -87,8 +85,7 @@ Mensagem: "{texto}"
         conteudo = response.choices[0].message.content
         conteudo = conteudo.replace("```json", "").replace("```", "").strip()
         try:
-            data = json.loads(conteudo)
-            return data
+            return json.loads(conteudo)
         except Exception:
             return {"acao": None, "erro": "Resposta IA inválida", "detalhes": conteudo}
     except Exception as e:
@@ -104,13 +101,13 @@ def obter_aviso_pedido(pedido_id):
         return None
     return "\n".join([f"- {a.get('message')}" for a in avisos])
 
-# === Endpoint principal de mensagens ===
+# === Endpoint principal ===
 @app.post("/mensagem")
 async def message_endpoint(msg: Message):
-    print(f"📩 Mensagem recebida: {msg.user} -> {msg.text}")
+    logging.info(f"📩 Mensagem recebida: {msg.user} -> {msg.text}")
 
     intencao = entender_intencao(msg.text)
-    print("🧠 Interpretação IA:", intencao)
+    logging.info("🧠 Interpretação IA: %s", intencao)
 
     acao = intencao.get("acao")
     parametros = intencao.get("parametros", {})
@@ -135,8 +132,7 @@ async def message_endpoint(msg: Message):
             except (TypeError, ValueError):
                 return {"response": "Não consegui identificar o ID do pedido. Pode informar novamente?"}
             itens = itens_pedido(pid)
-            resposta = formatar_itens(itens)
-            return {"response": resposta}
+            return {"response": formatar_itens(itens)}
 
         elif acao == "autorizar_pedido":
             pid = parametros.get("pedido_id") or intencao.get("pedido_id")
@@ -146,15 +142,12 @@ async def message_endpoint(msg: Message):
             except (TypeError, ValueError):
                 return {"response": "Qual é o ID do pedido que você quer autorizar?"}
 
-            # Verifica status do pedido
             pedido = buscar_pedido_por_id(pid)
             if not pedido:
                 return {"response": f"Pedido {pid} não encontrado."}
-            status_atual = pedido.get("status")
-            if status_atual != "PENDING":
-                return {"response": f"❌ Não é possível autorizar o pedido {pid}. Status atual: {status_atual}"}
+            if pedido.get("status") != "PENDING":
+                return {"response": f"❌ Não é possível autorizar o pedido {pid}. Status atual: {pedido.get('status')}"}
 
-            # Tenta autorizar
             sucesso = autorizar_pedido(pid, obs)
             if sucesso:
                 return {"response": f"✅ Pedido {pid} autorizado com sucesso!"}
@@ -187,13 +180,11 @@ async def message_endpoint(msg: Message):
             caminho = gerar_relatorio_pdf(pid)
             if caminho:
                 return {"response": f"PDF do pedido {pid} gerado: {caminho}"}
-            avisos = obter_aviso_pedido(pid)
-            msg_avisos = f"\nAvisos do pedido:\n{avisos}" if avisos else ""
-            return {"response": f"❌ Erro ao gerar PDF.{msg_avisos}"}
+            return {"response": "❌ Erro ao gerar PDF. Verifique se o pedido possui análise disponível."}
 
         else:
             return {"response": f"Ação {acao} reconhecida, mas ainda não implementada."}
 
     except Exception as e:
-        print("❌ Erro ao executar ação:", e)
+        logging.error("❌ Erro ao executar ação: %s", e)
         return {"response": f"Erro ao executar ação {acao}: {e}"}
