@@ -80,11 +80,16 @@ Mensagem: "{texto}"
             temperature=0.2
         )
         conteudo = response.choices[0].message.content
+
+        # ===== Correção: Remove blocos de código Markdown =====
+        conteudo = conteudo.replace("```json", "").replace("```", "").strip()
+
         try:
             data = json.loads(conteudo)
             return data
-        except:
+        except Exception:
             return {"acao": None, "erro": "Resposta IA inválida", "detalhes": conteudo}
+
     except Exception as e:
         return {"acao": None, "erro": str(e)}
 
