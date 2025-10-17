@@ -3,7 +3,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import openai
 import os
-from datetime import datetime
 import json
 
 from sienge.sienge_pedidos import (
@@ -16,6 +15,7 @@ from sienge.sienge_pedidos import (
 
 app = FastAPI()
 
+# Permite que o frontend acesse
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -32,7 +32,7 @@ class Message(BaseModel):
 def root():
     return {"message": "🚀 Backend da Constru.IA ativado com sucesso!"}
 
-# === Função IA para entender intenção natural ===
+# === Função IA para identificar intenção ===
 def entender_intencao(texto: str):
     openai.api_key = os.getenv("OPENAI_API_KEY")
     if not openai.api_key:
@@ -72,7 +72,7 @@ def entender_intencao(texto: str):
     except Exception as e:
         return {"acao": None, "erro": str(e)}
 
-# === Processamento direto dos comandos existentes ===
+# === Processamento de comandos Sienge diretos ===
 def processar_comando_sienge(texto: str):
     texto = texto.lower().strip()
     try:
@@ -82,7 +82,7 @@ def processar_comando_sienge(texto: str):
                 return "\n".join([f"ID {p['id']} | {p['status']} | {p['date']}" for p in pedidos])
             return "Nenhum pedido pendente encontrado."
 
-        elif "itens do pedido" in texto or texto.startswith("pedido"):
+        elif "itens do pedido" in texto or "pedido" in texto:
             pid = ''.join(filter(str.isdigit, texto))
             if not pid:
                 return "❌ Não consegui identificar o ID do pedido."
@@ -100,14 +100,14 @@ def processar_comando_sienge(texto: str):
             resposta += f"Total: {total:.2f}"
             return resposta
 
-        elif "autorizar" in texto:
+        elif "autorizar" in texto or "autoriza" in texto:
             pid = ''.join(filter(str.isdigit, texto))
             if not pid:
                 return "❌ Não consegui identificar o ID do pedido."
             autorizar_pedido(int(pid))
             return f"✅ Pedido {pid} autorizado com sucesso!"
 
-        elif "reprovar" in texto:
+        elif "reprovar" in texto or "reprova" in texto:
             pid = ''.join(filter(str.isdigit, texto))
             if not pid:
                 return "❌ Não consegui identificar o ID do pedido."
@@ -117,46 +117,65 @@ def processar_comando_sienge(texto: str):
         elif "relatorio" in texto or "pdf" in texto:
             pid = ''.join(filter(str.isdigit, texto))
             if not pid:
-                return "❌ Não consegui identificar o ID do pedido."
-            url_pdf = gerar_relatorio_pdf(int(pid))
-            return f"📄 Relatório PDF do pedido {pid}: {url_pdf}"
+                return "❌ Não consegui identificar o ID do pedido para gerar PDF."
+            caminho = gerar_relatorio_pdf(int(pid))
+            if caminho:
+                return f"PDF do pedido {pid} gerado com sucesso: {caminho}"
+            return "❌ Erro ao gerar relatório PDF."
 
         else:
-            return "❌ Não consegui interpretar seu comando."
+            return "Desculpe, não entendi o que você deseja fazer no Sienge."
 
     except Exception as e:
-        print("Erro processando comando Sienge:", e)
-        return f"❌ Erro interno: {e}"
+        return f"❌ Erro ao processar comando: {e}"
 
-# === Endpoint principal ===
+# === Endpoint principal do chat ===
 @app.post("/mensagem")
-def mensagem(msg: Message):
-    interpretacao = entender_intencao(msg.text)
-    resposta = None
+def receber_mensagem(msg: Message):
+    # Tenta interpretar via IA
+    intencao = entender_intencao(msg.text)
 
-    acao = interpretacao.get("acao")
-    try:
-        if acao == "itens_pedido":
-            pid = interpretacao.get("pedido_id")
-            if pid:
-                resposta = processar_comando_sienge(f"pedido {pid}")
-        elif acao == "autorizar_pedido":
-            pid = interpretacao.get("pedido_id")
-            if pid:
-                resposta = processar_comando_sienge(f"autorizar pedido {pid}")
-        elif acao == "reprovar_pedido":
-            pid = interpretacao.get("pedido_id")
-            if pid:
-                resposta = processar_comando_sienge(f"reprovar pedido {pid}")
-        elif acao == "relatorio_pdf":
-            pid = interpretacao.get("pedido_id")
-            if pid:
-                resposta = processar_comando_sienge(f"relatorio {pid}")
-    except Exception as e:
-        print("Erro ao processar ação da IA:", e)
+    if intencao.get("acao") == "itens_pedido":
+        pedido_id = int(intencao.get("pedido_id", 0))
+        if pedido_id:
+            itens = itens_pedido(pedido_id)
+            if itens:
+                resposta = "Itens do Pedido Nº | Descrição | Qtd | Valor\n"
+                total = 0
+                for i in itens:
+                    desc = i.get("resourceDescription") or i.get("itemDescription") or i.get("description") or "Sem descrição"
+                    qtd = i.get("quantity", 0)
+                    val = i.get("unitPrice") or i.get("totalAmount") or 0.0
+                    total += qtd * val
+                    resposta += f"{i.get('itemNumber','?')} | {desc} | {qtd} | {val:.2f}\n"
+                resposta += f"Total: {total:.2f}"
+                return {"resposta": resposta}
+            return {"resposta": "Nenhum item encontrado."}
+        return {"resposta": "❌ Não consegui identificar o ID do pedido."}
 
-    # Fallback direto para comandos do usuário, se IA falhar
-    if not resposta:
-        resposta = processar_comando_sienge(msg.text)
+    elif intencao.get("acao") == "autorizar_pedido":
+        pedido_id = int(intencao.get("pedido_id", 0))
+        if pedido_id:
+            autorizar_pedido(pedido_id)
+            return {"resposta": f"✅ Pedido {pedido_id} autorizado com sucesso!"}
+        return {"resposta": "❌ Não consegui identificar o ID do pedido."}
 
-    return {"resposta": resposta or "❌ Sem resposta da IA."}
+    elif intencao.get("acao") == "reprovar_pedido":
+        pedido_id = int(intencao.get("pedido_id", 0))
+        if pedido_id:
+            reprovar_pedido(pedido_id)
+            return {"resposta": f"🚫 Pedido {pedido_id} reprovado com sucesso!"}
+        return {"resposta": "❌ Não consegui identificar o ID do pedido."}
+
+    elif intencao.get("acao") == "relatorio_pdf":
+        pedido_id = int(intencao.get("pedido_id", 0))
+        if pedido_id:
+            caminho = gerar_relatorio_pdf(pedido_id)
+            if caminho:
+                return {"resposta": f"PDF do pedido {pedido_id} gerado: {caminho}"}
+            return {"resposta": "❌ Erro ao gerar PDF."}
+        return {"resposta": "❌ Não consegui identificar o ID do pedido."}
+
+    # fallback para comandos diretos
+    resposta_direta = processar_comando_sienge(msg.text)
+    return {"resposta": resposta_direta}
