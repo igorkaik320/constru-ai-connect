@@ -60,7 +60,7 @@ def reprovar_pedido(purchase_order_id, observacao=None):
 def gerar_relatorio_pdf_bytes(purchase_order_id):
     url = f"{BASE_URL}/purchase-orders/{purchase_order_id}/analysis/pdf"
     pdf_headers = headers.copy()
-    pdf_headers["Accept"] = "application/pdf"  # Correção para gerar PDF
+    pdf_headers["Accept"] = "application/pdf"  # ESSENCIAL para receber PDF
     r = requests.get(url, headers=pdf_headers)
     logging.info(f"gerar_relatorio_pdf_bytes: {url} -> {r.status_code}")
     if r.status_code == 200:
