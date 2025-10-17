@@ -122,28 +122,35 @@ async def message_endpoint(msg: Message):
         # === Itens do pedido ===
         elif acao == "itens_pedido":
             pid = parametros.get("pedido_id")
-            if not pid:
+            try:
+                pid = int(pid)
+            except (TypeError, ValueError):
                 return {"response": "Qual é o ID do pedido que você quer ver?"}
-            itens = itens_pedido(int(pid))
+
+            itens = itens_pedido(pid)
             resposta = formatar_itens(itens)
             return {"response": resposta}
 
         # === Autorizar pedido ===
         elif acao == "autorizar_pedido":
             pid = parametros.get("pedido_id")
-            if not pid:
+            try:
+                pid = int(pid)
+            except (TypeError, ValueError):
                 return {"response": "Qual é o ID do pedido que você quer autorizar?"}
             obs = parametros.get("observacao")
-            autorizar_pedido(int(pid), obs)
+            autorizar_pedido(pid, obs)
             return {"response": f"✅ Pedido {pid} autorizado com sucesso!"}
 
         # === Reprovar pedido ===
         elif acao == "reprovar_pedido":
             pid = parametros.get("pedido_id")
-            if not pid:
+            try:
+                pid = int(pid)
+            except (TypeError, ValueError):
                 return {"response": "Qual é o ID do pedido que você quer reprovar?"}
             obs = parametros.get("observacao")
-            reprovar_pedido(int(pid), obs)
+            reprovar_pedido(pid, obs)
             return {"response": f"🚫 Pedido {pid} reprovado com sucesso!"}
 
         # === Outros comandos (placeholders) ===
