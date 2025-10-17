@@ -13,8 +13,6 @@ interface Message {
   type?: "text" | "pedidos";
 }
 
-const BACKEND_URL = "https://seu-backend-url.onrender.com"; // ⬅️ coloque aqui a URL real do seu backend no Render
-
 const Index = () => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -29,92 +27,17 @@ const Index = () => {
     scrollToBottom();
   }, [messages]);
 
-  const handleListarPedidos = async () => {
-    try {
-      const res = await fetch(`${BACKEND_URL}/pedidos`);
-      if (!res.ok) throw new Error("Erro ao buscar pedidos.");
-      const pedidos = await res.json();
-
-      const msg: Message = {
-        role: "assistant",
-        content: pedidos.length
-          ? "📋 Aqui estão os pedidos pendentes:"
-          : "Nenhum pedido pendente encontrado.",
-        pedidos,
-        type: "pedidos",
-      };
-      setMessages((prev) => [...prev, msg]);
-    } catch (err) {
-      toast({
-        title: "Erro",
-        description: "Falha ao listar pedidos.",
-        variant: "destructive",
-      });
-    }
-  };
-
-  const handleAcaoPedido = async (codigo: number, acao: "autorizar" | "reprovar") => {
-    try {
-      const res = await fetch(`${BACKEND_URL}/pedidos/${acao}/${codigo}`, {
-        method: "POST",
-      });
-      if (!res.ok) throw new Error("Erro na requisição.");
-
-      const sucesso = acao === "autorizar"
-        ? `✅ Pedido ${codigo} autorizado com sucesso!`
-        : `🚫 Pedido ${codigo} reprovado com sucesso!`;
-
-      setMessages((prev) => [
-        ...prev,
-        { role: "assistant", content: sucesso, type: "text" },
-      ]);
-    } catch {
-      toast({
-        title: "Erro",
-        description: `Falha ao ${acao} o pedido ${codigo}.`,
-        variant: "destructive",
-      });
-    }
-  };
-
   const sendMessage = async (text: string) => {
     const userMessage: Message = { role: "user", content: text };
     setMessages((prev) => [...prev, userMessage]);
     setIsLoading(true);
 
     try {
-      const lower = text.toLowerCase();
-      if (lower.includes("listar pedidos")) {
-        await handleListarPedidos();
-      } else if (lower.includes("autorizar pedido")) {
-        const numero = text.match(/\d+/)?.[0];
-        numero
-          ? await handleAcaoPedido(Number(numero), "autorizar")
-          : setMessages((prev) => [
-              ...prev,
-              {
-                role: "assistant",
-                content: "⚠️ Informe o número do pedido que deseja autorizar.",
-              },
-            ]);
-      } else if (lower.includes("reprovar pedido")) {
-        const numero = text.match(/\d+/)?.[0];
-        numero
-          ? await handleAcaoPedido(Number(numero), "reprovar")
-          : setMessages((prev) => [
-              ...prev,
-              {
-                role: "assistant",
-                content: "⚠️ Informe o número do pedido que deseja reprovar.",
-              },
-            ]);
-      } else {
-        const response = await sendMessageToBackend("usuário", text);
-        setMessages((prev) => [
-          ...prev,
-          { role: "assistant", content: response },
-        ]);
-      }
+      const response = await sendMessageToBackend("usuário", text);
+      setMessages((prev) => [
+        ...prev,
+        { role: "assistant", content: response },
+      ]);
     } catch (error) {
       console.error("Erro:", error);
       toast({
@@ -141,7 +64,7 @@ const Index = () => {
                 Bem-vindo ao constru.ia
               </h2>
               <p className="text-muted-foreground">
-                Digite “listar pedidos” para ver os pendentes.
+                Digite sua mensagem para interagir com o sistema Sienge.
               </p>
             </div>
           </div>
@@ -151,7 +74,6 @@ const Index = () => {
           <ChatMessage
             key={index}
             message={message}
-            onAction={handleAcaoPedido}
           />
         ))}
 
