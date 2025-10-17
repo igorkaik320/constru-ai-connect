@@ -103,4 +103,4 @@ def processar_comando_sienge(texto: str):
         elif texto.startswith("autoriza"):
             pid = ''.join(filter(str.isdigit, texto))
             if not pid:
-                return "❌ Não consegui
+                return "❌ Não consegui identificar o ID do pedido."
