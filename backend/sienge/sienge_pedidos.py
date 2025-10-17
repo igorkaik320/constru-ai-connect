@@ -3,7 +3,8 @@ import httpx
 import logging
 from typing import List, Dict
 
-SIENGE_API_KEY = "9SQ2MaNrFOeZOOuOAqeSRy7bYWYDDf85"  # Substitua pela sua chave de API do Sienge
+# Substitua pela sua chave de API do Sienge
+SIENGE_API_KEY = "9SQ2MaNrFOeZOOuOAqeSRy7bYWYDDf85"  
 BASE_URL = "https://api.sienge.com.br/cctcontrol/public/api/v1/purchase-orders"
 
 logging.basicConfig(level=logging.INFO)
