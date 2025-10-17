@@ -9,6 +9,7 @@ senha = "gTCWxPf3txvQXwOXn65tz1tA9cdOZZlD"
 
 BASE_URL = f"https://api.sienge.com.br/{subdominio}/public/api/v1"
 
+# Token de autenticação
 token = b64encode(f"{usuario}:{senha}".encode()).decode()
 headers = {
     "Authorization": f"Basic {token}",
@@ -16,7 +17,10 @@ headers = {
     "Content-Type": "application/json"
 }
 
+# Configura logging
 logging.basicConfig(level=logging.INFO)
+
+# === FUNÇÕES ===
 
 def listar_pedidos_pendentes(data_inicio=None, data_fim=None):
     url = f"{BASE_URL}/purchase-orders?status=PENDING"
@@ -60,4 +64,19 @@ def gerar_relatorio_pdf_bytes(purchase_order_id):
     logging.info(f"gerar_relatorio_pdf_bytes: {url} -> {r.status_code}")
     if r.status_code == 200:
         return r.content
+    return None
+
+def gerar_relatorio_pdf(purchase_order_id):
+    """
+    Função que gera o PDF do pedido e salva em arquivo.
+    Retorna o caminho do arquivo salvo ou None se houver erro.
+    """
+    conteudo = gerar_relatorio_pdf_bytes(purchase_order_id)
+    if conteudo:
+        filename = f"relatorio_pedido_{purchase_order_id}.pdf"
+        with open(filename, "wb") as f:
+            f.write(conteudo)
+        logging.info(f"PDF gerado: {filename}")
+        return filename
+    logging.warning(f"Não foi possível gerar PDF para o pedido {purchase_order_id}")
     return None
