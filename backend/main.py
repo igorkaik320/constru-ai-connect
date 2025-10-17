@@ -32,6 +32,7 @@ class Message(BaseModel):
 def root():
     return {"message": "🚀 Backend da Constru.IA ativado com sucesso!"}
 
+
 # === Função IA para entender intenção natural ===
 def entender_intencao(texto: str):
     openai.api_key = os.getenv("OPENAI_API_KEY")
@@ -72,17 +73,36 @@ def entender_intencao(texto: str):
     except Exception as e:
         return {"acao": None, "erro": str(e)}
 
+
 # === Processamento direto dos comandos existentes ===
 def processar_comando_sienge(texto: str):
     texto = texto.lower().strip()
     try:
+        # === PEDIDOS PENDENTES ===
         if texto.startswith("pedidos pendentes"):
             pedidos = listar_pedidos_pendentes()
             if pedidos:
                 return "\n".join([f"ID {p['id']} | {p['status']} | {p['date']}" for p in pedidos])
             return "Nenhum pedido pendente encontrado."
 
-        elif "itens do pedido" in texto or "pedido" in texto:
+        # === AUTORIZAR PEDIDO ===
+        elif texto.startswith("autoriza") or texto.startswith("autorizar") or texto.startswith("quero autorizar"):
+            pid = ''.join(filter(str.isdigit, texto))
+            if not pid:
+                return "❌ Não consegui identificar o ID do pedido."
+            autorizar_pedido(int(pid))
+            return f"✅ Pedido {pid} autorizado com sucesso!"
+
+        # === REPROVAR PEDIDO ===
+        elif texto.startswith("reprova") or texto.startswith("reprovar") or texto.startswith("quero reprovar"):
+            pid = ''.join(filter(str.isdigit, texto))
+            if not pid:
+                return "❌ Não consegui identificar o ID do pedido."
+            reprovar_pedido(int(pid))
+            return f"🚫 Pedido {pid} reprovado com sucesso!"
+
+        # === ITENS DO PEDIDO ===
+        elif "itens do pedido" in texto or texto.startswith("pedido"):
             pid = ''.join(filter(str.isdigit, texto))
             if not pid:
                 return "❌ Não consegui identificar o ID do pedido."
@@ -100,103 +120,72 @@ def processar_comando_sienge(texto: str):
             resposta += f"Total: {total:.2f}"
             return resposta
 
-        elif texto.startswith("autoriza"):
-            pid = ''.join(filter(str.isdigit, texto))
-            if not pid:
-                return "❌ Não consegui identificar o ID do pedido."
-            autorizar_pedido(int(pid))
-            return f"✅ Pedido {pid} autorizado com sucesso!"
-
-        elif texto.startswith("reprova"):
-            pid = ''.join(filter(str.isdigit, texto))
-            if not pid:
-                return "❌ Não consegui identificar o ID do pedido."
-            reprovar_pedido(int(pid))
-            return f"🚫 Pedido {pid} reprovado com sucesso!"
-
+        # === RELATÓRIO PDF ===
         elif "relatorio" in texto or "pdf" in texto:
             pid = ''.join(filter(str.isdigit, texto))
             if not pid:
-                return "❌ Não consegui identificar o ID do pedido para gerar o relatório."
+                return "❌ Não consegui identificar o ID do pedido para gerar o PDF."
             pdf_bytes = gerar_relatorio_pdf(int(pid))
             if not pdf_bytes:
-                return "❌ Não foi possível gerar o relatório."
-            filename = f"relatorio_pedido_{pid}.pdf"
-            with open(filename, "wb") as f:
+                return "❌ Não consegui gerar o relatório."
+            arquivo_pdf = f"Relatorio_Pedido_{pid}.pdf"
+            with open(arquivo_pdf, "wb") as f:
                 f.write(pdf_bytes)
-            return f"📄 Relatório gerado: {filename}"
+            return f"✅ Relatório gerado: {arquivo_pdf}"
 
-        return None
+        return "❌ Não consegui identificar a ação desejada no Sienge."
+
     except Exception as e:
         return f"❌ Erro ao processar comando Sienge: {e}"
 
+
 # === Endpoint principal de mensagens ===
 @app.post("/mensagem")
-async def message_endpoint(msg: Message):
-    print(f"📩 Mensagem recebida: {msg.user} -> {msg.text}")
-
-    # 1️⃣ Tenta processar como comando direto
-    resposta_sienge = processar_comando_sienge(msg.text)
-    if resposta_sienge:
-        print(f"🤖 Resposta direta Sienge: {resposta_sienge}")
-        return {"response": resposta_sienge}
-
-    # 2️⃣ Caso contrário, tenta entender a intenção natural
-    intencao = entender_intencao(msg.text)
-    print("🧠 Interpretação IA:", intencao)
-
-    acao = intencao.get("acao")
-
-    if not acao:
-        return {"response": "Desculpe, não entendi o que você deseja fazer no Sienge."}
-
-    # 3️⃣ Executa conforme a intenção reconhecida
-    try:
+def mensagem(msg: Message):
+    # Primeiro tenta interpretar via IA
+    interpretacao = entender_intencao(msg.text)
+    if interpretacao.get("acao"):
+        acao = interpretacao["acao"]
         if acao == "listar_pedidos_pendentes":
             pedidos = listar_pedidos_pendentes()
-            return {"response": "\n".join([f"ID {p['id']} | {p['status']} | {p['date']}" for p in pedidos])}
-
+            return {"resposta": "\n".join([f"ID {p['id']} | {p['status']} | {p['date']}" for p in pedidos])}
         elif acao == "itens_pedido":
-            pid = int(intencao["parametros"].get("pedido_id", 0))
-            itens = itens_pedido(pid)
-            if not itens:
-                return {"response": "Nenhum item encontrado."}
-            resposta = "Itens do Pedido Nº | Descrição | Qtd | Valor\n"
-            total = 0
-            for i in itens:
-                desc = i.get("resourceDescription") or i.get("itemDescription") or i.get("description") or "Sem descrição"
-                qtd = i.get("quantity", 0)
-                val = i.get("unitPrice") or i.get("totalAmount") or 0.0
-                total += qtd * val
-                resposta += f"{i.get('itemNumber','?')} | {desc} | {qtd} | {val:.2f}\n"
-            resposta += f"Total: {total:.2f}"
-            return {"response": resposta}
-
+            pid = interpretacao.get("pedido_id")
+            if pid:
+                itens = itens_pedido(int(pid))
+                if not itens:
+                    return {"resposta": "Nenhum item encontrado."}
+                resposta = "Itens do Pedido Nº | Descrição | Qtd | Valor\n"
+                total = 0
+                for i in itens:
+                    desc = i.get("resourceDescription") or i.get("itemDescription") or i.get("description") or "Sem descrição"
+                    qtd = i.get("quantity", 0)
+                    val = i.get("unitPrice") or i.get("totalAmount") or 0.0
+                    total += qtd * val
+                    resposta += f"{i.get('itemNumber','?')} | {desc} | {qtd} | {val:.2f}\n"
+                resposta += f"Total: {total:.2f}"
+                return {"resposta": resposta}
         elif acao == "autorizar_pedido":
-            pid = int(intencao["parametros"].get("pedido_id", 0))
-            obs = intencao["parametros"].get("observacao")
-            autorizar_pedido(pid, obs)
-            return {"response": f"✅ Pedido {pid} autorizado com sucesso!"}
-
+            pid = interpretacao.get("pedido_id")
+            if pid:
+                autorizar_pedido(int(pid))
+                return {"resposta": f"✅ Pedido {pid} autorizado com sucesso!"}
         elif acao == "reprovar_pedido":
-            pid = int(intencao["parametros"].get("pedido_id", 0))
-            obs = intencao["parametros"].get("observacao")
-            reprovar_pedido(pid, obs)
-            return {"response": f"🚫 Pedido {pid} reprovado com sucesso!"}
-
+            pid = interpretacao.get("pedido_id")
+            if pid:
+                reprovar_pedido(int(pid))
+                return {"resposta": f"🚫 Pedido {pid} reprovado com sucesso!"}
         elif acao == "relatorio_pdf":
-            pid = int(intencao["parametros"].get("pedido_id", 0))
-            pdf_bytes = gerar_relatorio_pdf(pid)
-            if not pdf_bytes:
-                return {"response": "❌ Não foi possível gerar o relatório."}
-            filename = f"relatorio_pedido_{pid}.pdf"
-            with open(filename, "wb") as f:
-                f.write(pdf_bytes)
-            return {"response": f"📄 Relatório gerado: {filename}"}
+            pid = interpretacao.get("pedido_id")
+            if pid:
+                pdf_bytes = gerar_relatorio_pdf(int(pid))
+                if not pdf_bytes:
+                    return {"resposta": "❌ Não consegui gerar o relatório."}
+                arquivo_pdf = f"Relatorio_Pedido_{pid}.pdf"
+                with open(arquivo_pdf, "wb") as f:
+                    f.write(pdf_bytes)
+                return {"resposta": f"✅ Relatório gerado: {arquivo_pdf}"}
 
-        else:
-            return {"response": "Desculpe, ainda não sei executar essa ação no Sienge."}
-
-    except Exception as e:
-        print("❌ Erro ao executar ação:", e)
-        return {"response": f"Erro ao executar ação {acao}: {e}"}
+    # Se IA não entendeu, tenta processar direto
+    resposta_direta = processar_comando_sienge(msg.text)
+    return {"resposta": resposta_direta}
