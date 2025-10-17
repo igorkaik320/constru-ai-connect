@@ -6,16 +6,14 @@ import os
 from datetime import datetime
 import json
 
-# === Importa funções Sienge ===
 from sienge.sienge_pedidos import (
     listar_pedidos_pendentes,
     itens_pedido,
     autorizar_pedido,
     reprovar_pedido,
-    gerar_relatorio_pedido
+    gerar_relatorio_pdf
 )
 
-# === Configuração base ===
 app = FastAPI()
 
 app.add_middleware(
@@ -52,7 +50,7 @@ def entender_intencao(texto: str):
     - gerar_boleto (cliente?, titulo?, parcela?)
     - gerar_imposto_renda (cliente?)
     - saldo_devedor (cliente?)
-    - relatorio_pedido (pedido_id)
+    - relatorio_pdf (pedido_id)
 
     Se não entender, devolva {{ "acao": null }}
 
@@ -74,7 +72,7 @@ def entender_intencao(texto: str):
     except Exception as e:
         return {"acao": None, "erro": str(e)}
 
-# === Processamento direto dos comandos ===
+# === Processamento direto dos comandos existentes ===
 def processar_comando_sienge(texto: str):
     texto = texto.lower().strip()
     try:
@@ -84,101 +82,25 @@ def processar_comando_sienge(texto: str):
                 return "\n".join([f"ID {p['id']} | {p['status']} | {p['date']}" for p in pedidos])
             return "Nenhum pedido pendente encontrado."
 
-        elif texto.startswith("itens do pedido"):
-            try:
-                pid = int(texto.split()[-1])
-            except:
-                return "❌ ID do pedido inválido."
-            itens = itens_pedido(pid)
-            if itens:
-                resposta = "\n".join([
-                    f"{i.get('itemNumber','?')} | {i.get('resourceDescription') or i.get('itemDescription') or i.get('description','Sem descrição')} | Qtd: {i.get('quantity',0)} | Valor: {i.get('unitPrice') or i.get('totalAmount',0.0)}"
-                    for i in itens
-                ])
-                total = sum(i.get('unitPrice') or i.get('totalAmount') or 0.0 for i in itens)
-                resposta += f"\nTotal: {total:.2f}"
-                return resposta
-            return "Nenhum item encontrado."
-
-        elif texto.startswith("autorizar o pedido"):
-            try:
-                pid = int(texto.split()[-1])
-            except:
-                return "❌ ID do pedido inválido."
-            sucesso = autorizar_pedido(pid)
-            return f"✅ Pedido {pid} autorizado!" if sucesso else f"❌ Falha ao autorizar pedido {pid}."
-
-        elif texto.startswith("reprovar o pedido"):
-            try:
-                pid = int(texto.split()[-1])
-            except:
-                return "❌ ID do pedido inválido."
-            sucesso = reprovar_pedido(pid)
-            return f"🚫 Pedido {pid} reprovado!" if sucesso else f"❌ Falha ao reprovar pedido {pid}."
-
-        return None
-    except Exception as e:
-        return f"❌ Erro ao processar comando Sienge: {e}"
-
-# === Endpoint principal ===
-@app.post("/mensagem")
-async def message_endpoint(msg: Message):
-    print(f"📩 Mensagem recebida: {msg.user} -> {msg.text}")
-
-    resposta_sienge = processar_comando_sienge(msg.text)
-    if resposta_sienge:
-        return {"response": resposta_sienge}
-
-    intencao = entender_intencao(msg.text)
-    print("🧠 Interpretação IA:", intencao)
-
-    acao = intencao.get("acao")
-    parametros = intencao.get("parametros") or {}
-
-    if not acao:
-        return {"response": "Desculpe, não entendi o que você deseja fazer no Sienge."}
-
-    try:
-        if acao == "listar_pedidos_pendentes":
-            pedidos = listar_pedidos_pendentes()
-            return {"response": "\n".join([f"ID {p['id']} | {p['status']} | {p['date']}" for p in pedidos])}
-
-        elif acao == "itens_pedido":
-            pid = int(parametros.get("pedido_id") or intencao.get("pedido_id", 0))
-            itens = itens_pedido(pid)
+        elif "itens do pedido" in texto or "pedido" in texto:
+            pid = ''.join(filter(str.isdigit, texto))
+            if not pid:
+                return "❌ Não consegui identificar o ID do pedido."
+            itens = itens_pedido(int(pid))
             if not itens:
-                return {"response": "Nenhum item encontrado."}
-            resposta = "\n".join([
-                f"{i.get('itemNumber','?')} | {i.get('resourceDescription') or i.get('itemDescription') or i.get('description','Sem descrição')} | Qtd: {i.get('quantity',0)} | Valor: {i.get('unitPrice') or i.get('totalAmount',0.0)}"
-                for i in itens
-            ])
-            total = sum(i.get('unitPrice') or i.get('totalAmount') or 0.0 for i in itens)
-            resposta += f"\nTotal: {total:.2f}"
-            return {"response": resposta}
+                return "Nenhum item encontrado."
+            resposta = "Itens do Pedido Nº | Descrição | Qtd | Valor\n"
+            total = 0
+            for i in itens:
+                desc = i.get("resourceDescription") or i.get("itemDescription") or i.get("description") or "Sem descrição"
+                qtd = i.get("quantity", 0)
+                val = i.get("unitPrice") or i.get("totalAmount") or 0.0
+                total += qtd * val
+                resposta += f"{i.get('itemNumber','?')} | {desc} | {qtd} | {val:.2f}\n"
+            resposta += f"Total: {total:.2f}"
+            return resposta
 
-        elif acao == "autorizar_pedido":
-            pid = int(parametros.get("pedido_id") or intencao.get("pedido_id", 0))
-            obs = parametros.get("observacao")
-            sucesso = autorizar_pedido(pid, obs)
-            return {"response": f"✅ Pedido {pid} autorizado!" if sucesso else f"❌ Falha ao autorizar pedido {pid}."}
-
-        elif acao == "reprovar_pedido":
-            pid = int(parametros.get("pedido_id") or intencao.get("pedido_id", 0))
-            obs = parametros.get("observacao")
-            sucesso = reprovar_pedido(pid, obs)
-            return {"response": f"🚫 Pedido {pid} reprovado!" if sucesso else f"❌ Falha ao reprovar pedido {pid}."}
-
-        elif acao == "relatorio_pedido":
-            pid = int(parametros.get("pedido_id") or intencao.get("pedido_id", 0))
-            caminho_pdf = gerar_relatorio_pedido(pid)
-            if caminho_pdf:
-                return {"response": f"✅ Relatório do pedido {pid} gerado com sucesso.", "pdf": caminho_pdf}
-            else:
-                return {"response": f"❌ Não foi possível gerar o relatório do pedido {pid}."}
-
-        else:
-            return {"response": "Desculpe, ainda não sei executar essa ação no Sienge."}
-
-    except Exception as e:
-        print("❌ Erro ao executar ação:", e)
-        return {"response": f"Erro ao executar ação {acao}: {e}"}
+        elif texto.startswith("autoriza"):
+            pid = ''.join(filter(str.isdigit, texto))
+            if not pid:
+                return "❌ Não consegui
