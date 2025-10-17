@@ -54,16 +54,16 @@ def reprovar_pedido(purchase_order_id, observacao=None):
     url = f"{BASE_URL}/purchase-orders/{purchase_order_id}/disapprove"
     body = {"observation": observacao} if observacao else {}
     r = requests.put(url, headers=headers, json=body)
-    logging.info(f"reprovar_pedido: {url} -> {r.status_code} | body={body} | response={r.text}")
+    logging.info(f"reprovar_pedido: {url} -> {r.status_code}")
     return r.status_code in [200, 204]
 
 def gerar_relatorio_pdf_bytes(purchase_order_id):
     url = f"{BASE_URL}/purchase-orders/{purchase_order_id}/analysis/pdf"
-    r = requests.get(url, headers=headers)
+    pdf_headers = headers.copy()
+    pdf_headers["Accept"] = "application/pdf"  # Correção para gerar PDF
+    r = requests.get(url, headers=pdf_headers)
     logging.info(f"gerar_relatorio_pdf_bytes: {url} -> {r.status_code}")
-    logging.info(f"Headers: {r.headers}")
-    logging.info(f"Content-Type: {r.headers.get('Content-Type')}")
-    if r.status_code == 200 and r.content:
+    if r.status_code == 200:
         return r.content
     logging.warning(f"Falha ao gerar PDF: status={r.status_code}, response={r.text}")
     return None
@@ -78,6 +78,8 @@ def gerar_relatorio_pdf(purchase_order_id):
         return filename
     logging.warning(f"Não foi possível gerar PDF para o pedido {purchase_order_id}")
     return None
+
+# === NOVOS ENDPOINTS ===
 
 def buscar_pedido_por_id(purchase_order_id):
     url = f"{BASE_URL}/purchase-orders/{purchase_order_id}"
