@@ -9,7 +9,11 @@ import { sendMessageToBackend } from "@/backendClient";
 interface Message {
   role: "user" | "assistant";
   content: string;
+  pedidos?: any[];
+  type?: "text" | "pedidos";
 }
+
+const BACKEND_URL = "https://seu-backend-url.onrender.com"; // ⬅️ coloque aqui a URL real do seu backend no Render
 
 const Index = () => {
   const [messages, setMessages] = useState<Message[]>([]);
@@ -25,29 +29,97 @@ const Index = () => {
     scrollToBottom();
   }, [messages]);
 
-  const sendMessage = async (text: string) => {
-    const userMessage: Message = {
-      role: "user",
-      content: text,
-    };
+  const handleListarPedidos = async () => {
+    try {
+      const res = await fetch(`${BACKEND_URL}/pedidos`);
+      if (!res.ok) throw new Error("Erro ao buscar pedidos.");
+      const pedidos = await res.json();
 
+      const msg: Message = {
+        role: "assistant",
+        content: pedidos.length
+          ? "📋 Aqui estão os pedidos pendentes:"
+          : "Nenhum pedido pendente encontrado.",
+        pedidos,
+        type: "pedidos",
+      };
+      setMessages((prev) => [...prev, msg]);
+    } catch (err) {
+      toast({
+        title: "Erro",
+        description: "Falha ao listar pedidos.",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleAcaoPedido = async (codigo: number, acao: "autorizar" | "reprovar") => {
+    try {
+      const res = await fetch(`${BACKEND_URL}/pedidos/${acao}/${codigo}`, {
+        method: "POST",
+      });
+      if (!res.ok) throw new Error("Erro na requisição.");
+
+      const sucesso = acao === "autorizar"
+        ? `✅ Pedido ${codigo} autorizado com sucesso!`
+        : `🚫 Pedido ${codigo} reprovado com sucesso!`;
+
+      setMessages((prev) => [
+        ...prev,
+        { role: "assistant", content: sucesso, type: "text" },
+      ]);
+    } catch {
+      toast({
+        title: "Erro",
+        description: `Falha ao ${acao} o pedido ${codigo}.`,
+        variant: "destructive",
+      });
+    }
+  };
+
+  const sendMessage = async (text: string) => {
+    const userMessage: Message = { role: "user", content: text };
     setMessages((prev) => [...prev, userMessage]);
     setIsLoading(true);
 
     try {
-      const response = await sendMessageToBackend("usuário", text);
-
-      const aiMessage: Message = {
-        role: "assistant",
-        content: response,
-      };
-
-      setMessages((prev) => [...prev, aiMessage]);
+      const lower = text.toLowerCase();
+      if (lower.includes("listar pedidos")) {
+        await handleListarPedidos();
+      } else if (lower.includes("autorizar pedido")) {
+        const numero = text.match(/\d+/)?.[0];
+        numero
+          ? await handleAcaoPedido(Number(numero), "autorizar")
+          : setMessages((prev) => [
+              ...prev,
+              {
+                role: "assistant",
+                content: "⚠️ Informe o número do pedido que deseja autorizar.",
+              },
+            ]);
+      } else if (lower.includes("reprovar pedido")) {
+        const numero = text.match(/\d+/)?.[0];
+        numero
+          ? await handleAcaoPedido(Number(numero), "reprovar")
+          : setMessages((prev) => [
+              ...prev,
+              {
+                role: "assistant",
+                content: "⚠️ Informe o número do pedido que deseja reprovar.",
+              },
+            ]);
+      } else {
+        const response = await sendMessageToBackend("usuário", text);
+        setMessages((prev) => [
+          ...prev,
+          { role: "assistant", content: response },
+        ]);
+      }
     } catch (error) {
-      console.error("Erro ao enviar mensagem:", error);
+      console.error("Erro:", error);
       toast({
         title: "Erro",
-        description: "Erro ao se comunicar com a IA.",
+        description: "Erro ao se comunicar com o servidor.",
         variant: "destructive",
       });
     } finally {
@@ -58,7 +130,6 @@ const Index = () => {
   return (
     <div className="flex flex-col h-screen bg-background">
       <ChatHeader />
-
       <div className="flex-1 overflow-y-auto">
         {messages.length === 0 && (
           <div className="h-full flex items-center justify-center px-4">
@@ -70,15 +141,18 @@ const Index = () => {
                 Bem-vindo ao constru.ia
               </h2>
               <p className="text-muted-foreground">
-                Sua assistente de IA inteligente. Faça perguntas, peça ajuda ou
-                converse sobre qualquer assunto.
+                Digite “listar pedidos” para ver os pendentes.
               </p>
             </div>
           </div>
         )}
 
         {messages.map((message, index) => (
-          <ChatMessage key={index} message={message} />
+          <ChatMessage
+            key={index}
+            message={message}
+            onAction={handleAcaoPedido}
+          />
         ))}
 
         {isLoading && (
