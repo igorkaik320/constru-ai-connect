@@ -3,7 +3,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import openai
 import os
+from datetime import datetime
 import json
+
 from sienge.sienge_pedidos import (
     listar_pedidos_pendentes,
     itens_pedido,
@@ -45,6 +47,9 @@ def entender_intencao(texto: str):
     - itens_pedido (pedido_id)
     - autorizar_pedido (pedido_id, observacao?)
     - reprovar_pedido (pedido_id, observacao?)
+    - gerar_boleto (cliente?, titulo?, parcela?)
+    - gerar_imposto_renda (cliente?)
+    - saldo_devedor (cliente?)
     - relatorio_pdf (pedido_id)
 
     Se não entender, devolva {{ "acao": null }}
@@ -60,7 +65,8 @@ def entender_intencao(texto: str):
         )
         conteudo = response.choices[0].message.content
         try:
-            return json.loads(conteudo)
+            data = json.loads(conteudo)
+            return data
         except:
             return {"acao": None, "erro": "Resposta IA inválida", "detalhes": conteudo}
     except Exception as e:
@@ -69,95 +75,87 @@ def entender_intencao(texto: str):
 # === Processamento direto dos comandos existentes ===
 def processar_comando_sienge(texto: str):
     texto = texto.lower().strip()
-    if texto.startswith("pedidos pendentes"):
-        pedidos = listar_pedidos_pendentes()
-        if pedidos:
-            return "\n".join([f"ID {p['id']} | {p['status']} | {p['date']}" for p in pedidos])
-        return "Nenhum pedido pendente encontrado."
+    try:
+        if texto.startswith("pedidos pendentes"):
+            pedidos = listar_pedidos_pendentes()
+            if pedidos:
+                return "\n".join([f"ID {p['id']} | {p['status']} | {p['date']}" for p in pedidos])
+            return "Nenhum pedido pendente encontrado."
 
-    elif "itens do pedido" in texto or "pedido" in texto:
-        pid = ''.join(filter(str.isdigit, texto))
-        if not pid:
-            return "❌ Não consegui identificar o ID do pedido."
-        itens = itens_pedido(int(pid))
-        if not itens:
-            return "Nenhum item encontrado."
-        resposta = "Itens do Pedido Nº | Descrição | Qtd | Valor\n"
-        total = 0
-        for i in itens:
-            desc = i.get("resourceDescription") or i.get("itemDescription") or i.get("description") or "Sem descrição"
-            qtd = i.get("quantity", 0)
-            val = i.get("unitPrice") or i.get("totalAmount") or 0.0
-            total += qtd * val
-            resposta += f"{i.get('itemNumber','?')} | {desc} | {qtd} | {val:.2f}\n"
-        resposta += f"Total: {total:.2f}"
-        return resposta
+        elif "itens do pedido" in texto or texto.startswith("pedido"):
+            pid = ''.join(filter(str.isdigit, texto))
+            if not pid:
+                return "❌ Não consegui identificar o ID do pedido."
+            itens = itens_pedido(int(pid))
+            if not itens:
+                return "Nenhum item encontrado."
+            resposta = "Itens do Pedido Nº | Descrição | Qtd | Valor\n"
+            total = 0
+            for i in itens:
+                desc = i.get("resourceDescription") or i.get("itemDescription") or i.get("description") or "Sem descrição"
+                qtd = i.get("quantity", 0)
+                val = i.get("unitPrice") or i.get("totalAmount") or 0.0
+                total += qtd * val
+                resposta += f"{i.get('itemNumber','?')} | {desc} | {qtd} | {val:.2f}\n"
+            resposta += f"Total: {total:.2f}"
+            return resposta
 
-    elif "autorizar" in texto or texto.startswith("autoriza"):
-        pid = ''.join(filter(str.isdigit, texto))
-        if not pid:
-            return "❌ Não consegui identificar o ID do pedido."
-        sucesso = autorizar_pedido(int(pid))
-        return f"✅ Pedido {pid} autorizado com sucesso!" if sucesso else f"❌ Falha ao autorizar pedido {pid}."
+        elif "autorizar" in texto:
+            pid = ''.join(filter(str.isdigit, texto))
+            if not pid:
+                return "❌ Não consegui identificar o ID do pedido."
+            autorizar_pedido(int(pid))
+            return f"✅ Pedido {pid} autorizado com sucesso!"
 
-    elif "reprovar" in texto or texto.startswith("reprova"):
-        pid = ''.join(filter(str.isdigit, texto))
-        if not pid:
-            return "❌ Não consegui identificar o ID do pedido."
-        sucesso = reprovar_pedido(int(pid))
-        return f"🚫 Pedido {pid} reprovado com sucesso!" if sucesso else f"❌ Falha ao reprovar pedido {pid}."
+        elif "reprovar" in texto:
+            pid = ''.join(filter(str.isdigit, texto))
+            if not pid:
+                return "❌ Não consegui identificar o ID do pedido."
+            reprovar_pedido(int(pid))
+            return f"🚫 Pedido {pid} reprovado com sucesso!"
 
-    elif "relatorio" in texto or "pdf" in texto:
-        pid = ''.join(filter(str.isdigit, texto))
-        if not pid:
-            return "❌ Não consegui identificar o ID do pedido para gerar PDF."
-        arquivo = gerar_relatorio_pdf(int(pid))
-        return f"📄 PDF gerado: {arquivo}" if arquivo else "❌ Falha ao gerar PDF."
+        elif "relatorio" in texto or "pdf" in texto:
+            pid = ''.join(filter(str.isdigit, texto))
+            if not pid:
+                return "❌ Não consegui identificar o ID do pedido."
+            url_pdf = gerar_relatorio_pdf(int(pid))
+            return f"📄 Relatório PDF do pedido {pid}: {url_pdf}"
 
-    return "Desculpe, não entendi o que você deseja fazer no Sienge."
+        else:
+            return "❌ Não consegui interpretar seu comando."
 
-# === Endpoint principal de mensagens ===
+    except Exception as e:
+        print("Erro processando comando Sienge:", e)
+        return f"❌ Erro interno: {e}"
+
+# === Endpoint principal ===
 @app.post("/mensagem")
 def mensagem(msg: Message):
     interpretacao = entender_intencao(msg.text)
     resposta = None
 
-    # Tenta executar ação via IA
     acao = interpretacao.get("acao")
-    if acao:
+    try:
         if acao == "itens_pedido":
             pid = interpretacao.get("pedido_id")
             if pid:
-                itens = itens_pedido(int(pid))
-                if not itens:
-                    resposta = "Nenhum item encontrado."
-                else:
-                    total = 0
-                    resposta = "Itens do Pedido Nº | Descrição | Qtd | Valor\n"
-                    for i in itens:
-                        desc = i.get("resourceDescription") or i.get("itemDescription") or i.get("description") or "Sem descrição"
-                        qtd = i.get("quantity", 0)
-                        val = i.get("unitPrice") or i.get("totalAmount") or 0.0
-                        total += qtd * val
-                        resposta += f"{i.get('itemNumber','?')} | {desc} | {qtd} | {val:.2f}\n"
-                    resposta += f"Total: {total:.2f}"
+                resposta = processar_comando_sienge(f"pedido {pid}")
         elif acao == "autorizar_pedido":
             pid = interpretacao.get("pedido_id")
             if pid:
-                sucesso = autorizar_pedido(int(pid))
-                resposta = f"✅ Pedido {pid} autorizado!" if sucesso else f"❌ Falha ao autorizar pedido {pid}."
+                resposta = processar_comando_sienge(f"autorizar pedido {pid}")
         elif acao == "reprovar_pedido":
             pid = interpretacao.get("pedido_id")
             if pid:
-                sucesso = reprovar_pedido(int(pid))
-                resposta = f"🚫 Pedido {pid} reprovado!" if sucesso else f"❌ Falha ao reprovar pedido {pid}."
+                resposta = processar_comando_sienge(f"reprovar pedido {pid}")
         elif acao == "relatorio_pdf":
             pid = interpretacao.get("pedido_id")
             if pid:
-                arquivo = gerar_relatorio_pdf(int(pid))
-                resposta = f"📄 PDF gerado: {arquivo}" if arquivo else "❌ Falha ao gerar PDF."
+                resposta = processar_comando_sienge(f"relatorio {pid}")
+    except Exception as e:
+        print("Erro ao processar ação da IA:", e)
 
-    # Se não entendeu ou ação falhou, tenta comando direto
+    # Fallback direto para comandos do usuário, se IA falhar
     if not resposta:
         resposta = processar_comando_sienge(msg.text)
 
