@@ -81,7 +81,7 @@ Mensagem: "{texto}"
         )
         conteudo = response.choices[0].message.content
 
-        # ===== Correção: Remove blocos de código Markdown =====
+        # Remove blocos de código Markdown
         conteudo = conteudo.replace("```json", "").replace("```", "").strip()
 
         try:
@@ -98,7 +98,7 @@ Mensagem: "{texto}"
 async def message_endpoint(msg: Message):
     print(f"📩 Mensagem recebida: {msg.user} -> {msg.text}")
 
-    # 1️⃣ Envia para IA para interpretação natural
+    # Processa sempre via IA
     intencao = entender_intencao(msg.text)
     print("🧠 Interpretação IA:", intencao)
 
@@ -125,7 +125,7 @@ async def message_endpoint(msg: Message):
             try:
                 pid = int(pid)
             except (TypeError, ValueError):
-                return {"response": "Qual é o ID do pedido que você quer ver?"}
+                return {"response": "Não consegui identificar o ID do pedido. Pode informar novamente?"}
 
             itens = itens_pedido(pid)
             resposta = formatar_itens(itens)
