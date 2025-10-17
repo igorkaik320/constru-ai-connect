@@ -1,5 +1,6 @@
 import requests
 from base64 import b64encode
+import logging
 
 # === CONFIGURAÇÕES ===
 subdominio = "cctcontrol"
@@ -8,7 +9,6 @@ senha = "gTCWxPf3txvQXwOXn65tz1tA9cdOZZlD"
 
 BASE_URL = f"https://api.sienge.com.br/{subdominio}/public/api/v1"
 
-# Token de autenticação
 token = b64encode(f"{usuario}:{senha}".encode()).decode()
 headers = {
     "Authorization": f"Basic {token}",
@@ -16,7 +16,7 @@ headers = {
     "Content-Type": "application/json"
 }
 
-# === FUNÇÕES DE PEDIDOS ===
+logging.basicConfig(level=logging.INFO)
 
 def listar_pedidos_pendentes(data_inicio=None, data_fim=None):
     url = f"{BASE_URL}/purchase-orders?status=PENDING"
@@ -26,24 +26,16 @@ def listar_pedidos_pendentes(data_inicio=None, data_fim=None):
         url += f"&endDate={data_fim}"
 
     r = requests.get(url, headers=headers)
-    print("=== DEBUG listar_pedidos_pendentes ===")
-    print("URL:", url)
-    print("Status Code:", r.status_code)
-    print("Response Text:", r.text)
-
+    logging.info(f"listar_pedidos_pendentes: {url} -> {r.status_code}")
     if r.status_code == 200:
         data = r.json()
-        pedidos_filtrados = [p for p in data.get("results", []) if not p.get("authorized", False)]
-        return pedidos_filtrados
+        return [p for p in data.get("results", []) if not p.get("authorized", False)]
     return []
 
 def itens_pedido(purchase_order_id):
     url = f"{BASE_URL}/purchase-orders/{purchase_order_id}/items"
     r = requests.get(url, headers=headers)
-    print("=== DEBUG itens_pedido ===")
-    print("URL:", url)
-    print("Status Code:", r.status_code)
-    print("Response Text:", r.text)
+    logging.info(f"itens_pedido: {url} -> {r.status_code}")
     if r.status_code == 200:
         return r.json().get("results", [])
     return []
@@ -52,33 +44,20 @@ def autorizar_pedido(purchase_order_id, observacao=None):
     url = f"{BASE_URL}/purchase-orders/{purchase_order_id}/authorize"
     body = {"observation": observacao} if observacao else {}
     r = requests.put(url, headers=headers, json=body)
-    print("=== DEBUG autorizar_pedido ===")
-    print("URL:", url)
-    print("Body:", body)
-    print("Status Code:", r.status_code)
-    print("Response Text:", r.text)
+    logging.info(f"autorizar_pedido: {url} -> {r.status_code}")
     return r.status_code in [200, 204]
 
 def reprovar_pedido(purchase_order_id, observacao=None):
     url = f"{BASE_URL}/purchase-orders/{purchase_order_id}/disapprove"
     body = {"observation": observacao} if observacao else {}
     r = requests.put(url, headers=headers, json=body)
-    print("=== DEBUG reprovar_pedido ===")
-    print("URL:", url)
-    print("Body:", body)
-    print("Status Code:", r.status_code)
-    print("Response Text:", r.text)
+    logging.info(f"reprovar_pedido: {url} -> {r.status_code}")
     return r.status_code in [200, 204]
 
-def gerar_relatorio_pdf(purchase_order_id):
+def gerar_relatorio_pdf_bytes(purchase_order_id):
     url = f"{BASE_URL}/purchase-orders/{purchase_order_id}/analysis/pdf"
     r = requests.get(url, headers=headers)
-    print("=== DEBUG gerar_relatorio_pdf ===")
-    print("URL:", url)
-    print("Status Code:", r.status_code)
+    logging.info(f"gerar_relatorio_pdf_bytes: {url} -> {r.status_code}")
     if r.status_code == 200:
-        filename = f"relatorio_pedido_{purchase_order_id}.pdf"
-        with open(filename, "wb") as f:
-            f.write(r.content)
-        return filename
+        return r.content
     return None
