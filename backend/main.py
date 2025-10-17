@@ -33,24 +33,38 @@ class Message(BaseModel):
     user: str
     text: str
 
+# ==========================
+# Função para formatar itens
+# ==========================
 def formatar_itens(itens):
     if not itens:
         return "Nenhum item encontrado."
+    
     linhas = ["Itens do Pedido"]
-    header = f"{'Nº':<4} | {'Descrição':<35} | {'Qtd':<6} | {'Valor':<10}"
+    header = f"{'Nº':<3} | {'Código':<10} | {'Descrição':<35} | {'Qtd':<5} | {'Unid':<5} | {'Valor Unit':<10} | {'Total':<10}"
     linhas.append(header)
     linhas.append("-" * len(header))
-    total = 0
+    
+    total_geral = 0
     for i, item in enumerate(itens, 1):
-        desc = item.get("resourceDescription") or item.get("itemDescription") or item.get("description","Sem descrição")
-        qtd = item.get("quantity",0)
-        valor = item.get("unitPrice") or item.get("totalAmount",0.0)
-        total += valor * qtd
-        linhas.append(f"{i:<4} | {desc:<35} | {qtd:<6} | {valor:<10.2f}")
+        codigo = item.get("itemCode") or item.get("resourceCode") or "-"
+        desc = item.get("resourceDescription") or item.get("itemDescription") or item.get("description", "Sem descrição")
+        qtd = item.get("quantity", 0)
+        unid = item.get("unit") or "-"
+        valor_unit = item.get("unitPrice") or item.get("totalAmount", 0.0)
+        total_item = qtd * valor_unit
+        total_geral += total_item
+        
+        linhas.append(f"{i:<3} | {codigo:<10} | {desc:<35} | {qtd:<5} | {unid:<5} | {valor_unit:<10.2f} | {total_item:<10.2f}")
+    
     linhas.append("-" * len(header))
-    linhas.append(f"Total: {total:.2f}")
+    linhas.append(f"TOTAL GERAL: {total_geral:.2f}")
+    
     return "\n".join(linhas)
 
+# ==========================
+# Função para interpretar intenção do usuário via OpenAI
+# ==========================
 def entender_intencao(texto: str):
     openai.api_key = os.getenv("OPENAI_API_KEY")
     if not openai.api_key:
@@ -87,6 +101,9 @@ Mensagem: "{texto}"
     except Exception as e:
         return {"acao": None, "erro": str(e)}
 
+# ==========================
+# Função para obter avisos do pedido
+# ==========================
 def obter_aviso_pedido(pedido_id):
     pedido = buscar_pedido_por_id(pedido_id)
     if not pedido:
@@ -96,6 +113,9 @@ def obter_aviso_pedido(pedido_id):
         return None
     return "\n".join([f"- {a.get('message')}" for a in avisos])
 
+# ==========================
+# Endpoint principal
+# ==========================
 @app.post("/mensagem")
 async def message_endpoint(msg: Message):
     logging.info(f"📩 Mensagem recebida: {msg.user} -> {msg.text}")
@@ -110,6 +130,9 @@ async def message_endpoint(msg: Message):
         return {"response": "Desculpe, não entendi o que você deseja fazer no Sienge."}
 
     try:
+        # ====================
+        # Listar pedidos
+        # ====================
         if acao == "listar_pedidos_pendentes":
             data_inicio = parametros.get("data_inicio")
             data_fim = parametros.get("data_fim")
@@ -118,6 +141,9 @@ async def message_endpoint(msg: Message):
                 return {"response": "Nenhum pedido pendente encontrado."}
             return {"response": "\n".join([f"ID {p['id']} | {p['status']} | {p['date']}" for p in pedidos])}
 
+        # ====================
+        # Itens do pedido
+        # ====================
         elif acao == "itens_pedido":
             pid = parametros.get("pedido_id") or intencao.get("pedido_id")
             try: pid = int(pid)
@@ -125,6 +151,9 @@ async def message_endpoint(msg: Message):
             itens = itens_pedido(pid)
             return {"response": formatar_itens(itens)}
 
+        # ====================
+        # Autorizar pedido
+        # ====================
         elif acao == "autorizar_pedido":
             pid = parametros.get("pedido_id") or intencao.get("pedido_id")
             obs = parametros.get("observacao")
@@ -142,6 +171,9 @@ async def message_endpoint(msg: Message):
             msg_avisos = f"\nAvisos do pedido:\n{avisos}" if avisos else ""
             return {"response": f"❌ Falha ao autorizar o pedido {pid}.{msg_avisos}"}
 
+        # ====================
+        # Reprovar pedido
+        # ====================
         elif acao == "reprovar_pedido":
             pid = parametros.get("pedido_id") or intencao.get("pedido_id")
             obs = parametros.get("observacao")
@@ -154,6 +186,9 @@ async def message_endpoint(msg: Message):
             msg_avisos = f"\nAvisos do pedido:\n{avisos}" if avisos else ""
             return {"response": f"❌ Falha ao reprovar o pedido {pid}.{msg_avisos}"}
 
+        # ====================
+        # Gerar PDF do pedido
+        # ====================
         elif acao == "relatorio_pdf":
             pid = parametros.get("pedido_id") or intencao.get("pedido_id")
             try: pid = int(pid)
