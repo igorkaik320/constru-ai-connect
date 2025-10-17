@@ -1,107 +1,99 @@
-import requests
-from base64 import b64encode
+# sienge_pedidos.py
+import httpx
 import logging
+from typing import List, Dict
 
-# === CONFIGURAÇÕES ===
-subdominio = "cctcontrol"
-usuario = "cctcontrol-api"
-senha = "gTCWxPf3txvQXwOXn65tz1tA9cdOZZlD"
+SIENGE_API_KEY = "SEU_TOKEN_AQUI"  # Substitua pela sua chave de API do Sienge
+BASE_URL = "https://api.sienge.com.br/cctcontrol/public/api/v1/purchase-orders"
 
-BASE_URL = f"https://api.sienge.com.br/{subdominio}/public/api/v1"
-
-# Token de autenticação
-token = b64encode(f"{usuario}:{senha}".encode()).decode()
-headers = {
-    "Authorization": f"Basic {token}",
-    "accept": "application/json",
-    "Content-Type": "application/json"
-}
-
-# Configura logging
 logging.basicConfig(level=logging.INFO)
 
-# === FUNÇÕES ===
-
-def listar_pedidos_pendentes(data_inicio=None, data_fim=None):
-    url = f"{BASE_URL}/purchase-orders?status=PENDING"
+# ==========================
+# Listar pedidos pendentes
+# ==========================
+def listar_pedidos_pendentes(data_inicio=None, data_fim=None) -> List[Dict]:
+    params = {}
     if data_inicio:
-        url += f"&startDate={data_inicio}"
+        params["dateStart"] = data_inicio
     if data_fim:
-        url += f"&endDate={data_fim}"
-    r = requests.get(url, headers=headers)
-    logging.info(f"listar_pedidos_pendentes: {url} -> {r.status_code}")
-    if r.status_code == 200:
-        data = r.json()
-        return [p for p in data.get("results", []) if not p.get("authorized", False)]
-    return []
+        params["dateEnd"] = data_fim
 
-def itens_pedido(purchase_order_id):
-    url = f"{BASE_URL}/purchase-orders/{purchase_order_id}/items"
-    r = requests.get(url, headers=headers)
-    logging.info(f"itens_pedido: {url} -> {r.status_code}")
-    if r.status_code == 200:
-        return r.json().get("results", [])
-    return []
+    headers = {"Authorization": f"Bearer {SIENGE_API_KEY}"}
 
-def autorizar_pedido(purchase_order_id, observacao=None):
-    url = f"{BASE_URL}/purchase-orders/{purchase_order_id}/authorize"
-    body = {"observation": observacao} if observacao else {}
-    r = requests.put(url, headers=headers, json=body)
-    logging.info(f"autorizar_pedido: {url} -> {r.status_code} | body={body} | response={r.text}")
-    return r.status_code in [200, 204]
+    resp = httpx.get(BASE_URL, headers=headers, params=params)
+    if resp.status_code == 200:
+        return resp.json()
+    else:
+        logging.warning(f"Falha ao listar pedidos: {resp.status_code}, {resp.text}")
+        return []
 
-def reprovar_pedido(purchase_order_id, observacao=None):
-    url = f"{BASE_URL}/purchase-orders/{purchase_order_id}/disapprove"
-    body = {"observation": observacao} if observacao else {}
-    r = requests.put(url, headers=headers, json=body)
-    logging.info(f"reprovar_pedido: {url} -> {r.status_code}")
-    return r.status_code in [200, 204]
-
-def gerar_relatorio_pdf_bytes(purchase_order_id):
-    url = f"{BASE_URL}/purchase-orders/{purchase_order_id}/analysis/pdf"
-    pdf_headers = headers.copy()
-    pdf_headers["Accept"] = "application/pdf"  # ESSENCIAL para receber PDF
-    r = requests.get(url, headers=pdf_headers)
-    logging.info(f"gerar_relatorio_pdf_bytes: {url} -> {r.status_code}")
-    if r.status_code == 200:
-        return r.content
-    logging.warning(f"Falha ao gerar PDF: status={r.status_code}, response={r.text}")
+# ==========================
+# Buscar pedido por ID
+# ==========================
+def buscar_pedido_por_id(pedido_id: int) -> Dict | None:
+    url = f"{BASE_URL}/{pedido_id}"
+    headers = {"Authorization": f"Bearer {SIENGE_API_KEY}"}
+    resp = httpx.get(url, headers=headers)
+    if resp.status_code == 200:
+        return resp.json()
+    logging.warning(f"Pedido {pedido_id} não encontrado: {resp.status_code}")
     return None
 
-def gerar_relatorio_pdf(purchase_order_id):
-    conteudo = gerar_relatorio_pdf_bytes(purchase_order_id)
-    if conteudo:
-        filename = f"relatorio_pedido_{purchase_order_id}.pdf"
-        with open(filename, "wb") as f:
-            f.write(conteudo)
-        logging.info(f"PDF gerado: {filename}")
-        return filename
-    logging.warning(f"Não foi possível gerar PDF para o pedido {purchase_order_id}")
-    return None
-
-# === NOVOS ENDPOINTS ===
-
-def buscar_pedido_por_id(purchase_order_id):
-    url = f"{BASE_URL}/purchase-orders/{purchase_order_id}"
-    r = requests.get(url, headers=headers)
-    logging.info(f"buscar_pedido_por_id: {url} -> {r.status_code}")
-    if r.status_code == 200:
-        return r.json()
-    return None
-
-def listar_pedidos_por_usuario(usuario_nome):
-    url = f"{BASE_URL}/purchase-orders"
-    r = requests.get(url, headers=headers)
-    logging.info(f"listar_pedidos_por_usuario: {url} -> {r.status_code}")
-    if r.status_code == 200:
-        data = r.json().get("results", [])
-        return [p for p in data if usuario_nome.lower() in (p.get("userName") or "").lower()]
+# ==========================
+# Itens do pedido
+# ==========================
+def itens_pedido(pedido_id: int) -> List[Dict]:
+    url = f"{BASE_URL}/{pedido_id}/items"
+    headers = {"Authorization": f"Bearer {SIENGE_API_KEY}"}
+    resp = httpx.get(url, headers=headers)
+    if resp.status_code == 200:
+        return resp.json()
+    logging.warning(f"Falha ao obter itens do pedido {pedido_id}: {resp.status_code}")
     return []
 
-def listar_pedidos_por_periodo(data_inicio, data_fim):
-    url = f"{BASE_URL}/purchase-orders?startDate={data_inicio}&endDate={data_fim}"
-    r = requests.get(url, headers=headers)
-    logging.info(f"listar_pedidos_por_periodo: {url} -> {r.status_code}")
-    if r.status_code == 200:
-        return r.json().get("results", [])
-    return []
+# ==========================
+# Autorizar pedido
+# ==========================
+def autorizar_pedido(pedido_id: int, observacao: str = None) -> bool:
+    url = f"{BASE_URL}/{pedido_id}/authorize"
+    headers = {"Authorization": f"Bearer {SIENGE_API_KEY}"}
+    payload = {"observation": observacao}
+    resp = httpx.post(url, headers=headers, json=payload)
+    if resp.status_code in (200, 204):
+        return True
+    logging.warning(f"Falha ao autorizar pedido {pedido_id}: {resp.status_code}, {resp.text}")
+    return False
+
+# ==========================
+# Reprovar pedido
+# ==========================
+def reprovar_pedido(pedido_id: int, observacao: str = None) -> bool:
+    url = f"{BASE_URL}/{pedido_id}/reject"
+    headers = {"Authorization": f"Bearer {SIENGE_API_KEY}"}
+    payload = {"observation": observacao}
+    resp = httpx.post(url, headers=headers, json=payload)
+    if resp.status_code in (200, 204):
+        return True
+    logging.warning(f"Falha ao reprovar pedido {pedido_id}: {resp.status_code}, {resp.text}")
+    return False
+
+# ==========================
+# Gerar PDF do pedido
+# ==========================
+def gerar_relatorio_pdf_bytes(pedido_id: int) -> bytes | None:
+    """
+    Gera o PDF do pedido retornando bytes.
+    Para evitar erro 406, envia 'Accept: application/pdf'.
+    """
+    url = f"{BASE_URL}/{pedido_id}/analysis/pdf"
+    headers = {
+        "Authorization": f"Bearer {SIENGE_API_KEY}",
+        "Accept": "application/pdf"
+    }
+    resp = httpx.get(url, headers=headers)
+    if resp.status_code == 200:
+        logging.info(f"PDF do pedido {pedido_id} gerado com sucesso.")
+        return resp.content
+    else:
+        logging.warning(f"Falha ao gerar PDF: status={resp.status_code}, response={resp.text}")
+        return None
