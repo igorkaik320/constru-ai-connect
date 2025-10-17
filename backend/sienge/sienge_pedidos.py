@@ -36,6 +36,12 @@ def listar_pedidos_pendentes(data_inicio=None, data_fim=None):
     return []
 
 def itens_pedido(purchase_order_id):
+    try:
+        purchase_order_id = int(purchase_order_id)
+    except ValueError:
+        logging.error(f"ID do pedido inválido: {purchase_order_id}")
+        return []
+
     url = f"{BASE_URL}/purchase-orders/{purchase_order_id}/items"
     r = requests.get(url, headers=headers)
     logging.info(f"itens_pedido: {url} -> {r.status_code}")
@@ -43,21 +49,39 @@ def itens_pedido(purchase_order_id):
         return r.json().get("results", [])
     return []
 
-def autorizar_pedido(purchase_order_id, observacao=None):
+def autorizar_pedido(purchase_order_id, observacao=""):
+    try:
+        purchase_order_id = int(purchase_order_id)
+    except ValueError:
+        logging.error(f"ID do pedido inválido: {purchase_order_id}")
+        return False
+
     url = f"{BASE_URL}/purchase-orders/{purchase_order_id}/authorize"
-    body = {"observation": observacao} if observacao else {}
+    body = {"observation": observacao}
     r = requests.put(url, headers=headers, json=body)
-    logging.info(f"autorizar_pedido: {url} -> {r.status_code}")
+    logging.info(f"autorizar_pedido: {url} -> {r.status_code} | body={body} | response={r.text}")
     return r.status_code in [200, 204]
 
-def reprovar_pedido(purchase_order_id, observacao=None):
+def reprovar_pedido(purchase_order_id, observacao=""):
+    try:
+        purchase_order_id = int(purchase_order_id)
+    except ValueError:
+        logging.error(f"ID do pedido inválido: {purchase_order_id}")
+        return False
+
     url = f"{BASE_URL}/purchase-orders/{purchase_order_id}/disapprove"
-    body = {"observation": observacao} if observacao else {}
+    body = {"observation": observacao}
     r = requests.put(url, headers=headers, json=body)
-    logging.info(f"reprovar_pedido: {url} -> {r.status_code}")
+    logging.info(f"reprovar_pedido: {url} -> {r.status_code} | body={body} | response={r.text}")
     return r.status_code in [200, 204]
 
 def gerar_relatorio_pdf_bytes(purchase_order_id):
+    try:
+        purchase_order_id = int(purchase_order_id)
+    except ValueError:
+        logging.error(f"ID do pedido inválido: {purchase_order_id}")
+        return None
+
     url = f"{BASE_URL}/purchase-orders/{purchase_order_id}/analysis/pdf"
     r = requests.get(url, headers=headers)
     logging.info(f"gerar_relatorio_pdf_bytes: {url} -> {r.status_code}")
@@ -79,6 +103,12 @@ def gerar_relatorio_pdf(purchase_order_id):
 # === NOVOS ENDPOINTS ===
 
 def buscar_pedido_por_id(purchase_order_id):
+    try:
+        purchase_order_id = int(purchase_order_id)
+    except ValueError:
+        logging.error(f"ID do pedido inválido: {purchase_order_id}")
+        return None
+
     url = f"{BASE_URL}/purchase-orders/{purchase_order_id}"
     r = requests.get(url, headers=headers)
     logging.info(f"buscar_pedido_por_id: {url} -> {r.status_code}")
