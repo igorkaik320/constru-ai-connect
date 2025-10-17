@@ -3,19 +3,26 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import os
 import json
-import openai
+import logging
+from base64 import b64encode
+import requests
 
+# Importar funções Sienge
 from sienge.sienge_pedidos import (
     listar_pedidos_pendentes,
     itens_pedido,
     autorizar_pedido,
     reprovar_pedido,
-    gerar_relatorio_pdf
+    gerar_relatorio_pdf,
+    buscar_pedido_por_id
 )
 
-# === CONFIGURA FASTAPI ===
+# === CONFIGURAÇÕES ===
+logging.basicConfig(level=logging.INFO)
+
 app = FastAPI()
 
+# Permitir CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -24,12 +31,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# === MODELO DE MENSAGEM ===
+# === Modelo de mensagem ===
 class Message(BaseModel):
     user: str
     text: str
 
-# === FUNÇÃO PARA FORMATAR ITENS DO PEDIDO ===
+# === Formatar itens do pedido para exibir no chat ===
 def formatar_itens(itens):
     if not itens:
         return "Nenhum item encontrado."
@@ -48,8 +55,9 @@ def formatar_itens(itens):
     linhas.append(f"Total: {total:.2f}")
     return "\n".join(linhas)
 
-# === FUNÇÃO PARA ENTENDER INTENÇÃO VIA IA ===
+# === Função IA para entender intenção ===
 def entender_intencao(texto: str):
+    import openai
     openai.api_key = os.getenv("OPENAI_API_KEY")
     if not openai.api_key:
         return {"acao": None, "erro": "Chave OpenAI não configurada."}
@@ -63,9 +71,6 @@ Possíveis ações:
 - itens_pedido (pedido_id)
 - autorizar_pedido (pedido_id, observacao?)
 - reprovar_pedido (pedido_id, observacao?)
-- gerar_boleto (cliente?, titulo?, parcela?)
-- gerar_imposto_renda (cliente?)
-- saldo_devedor (cliente?)
 - relatorio_pdf (pedido_id)
 
 Se algum parâmetro estiver faltando, pergunte ao usuário para confirmar.
@@ -89,7 +94,17 @@ Mensagem: "{texto}"
     except Exception as e:
         return {"acao": None, "erro": str(e)}
 
-# === ENDPOINT DE MENSAGEM DO CHAT ===
+# === Função para obter avisos do pedido ===
+def obter_aviso_pedido(pedido_id):
+    pedido = buscar_pedido_por_id(pedido_id)
+    if not pedido:
+        return None
+    avisos = pedido.get("alerts", [])
+    if not avisos:
+        return None
+    return "\n".join([f"- {a.get('message')}" for a in avisos])
+
+# === Endpoint principal de mensagens ===
 @app.post("/mensagem")
 async def message_endpoint(msg: Message):
     print(f"📩 Mensagem recebida: {msg.user} -> {msg.text}")
@@ -104,7 +119,6 @@ async def message_endpoint(msg: Message):
         return {"response": "Desculpe, não entendi o que você deseja fazer no Sienge."}
 
     try:
-        # === AÇÕES DE PEDIDO ===
         if acao == "listar_pedidos_pendentes":
             data_inicio = parametros.get("data_inicio")
             data_fim = parametros.get("data_fim")
@@ -126,23 +140,43 @@ async def message_endpoint(msg: Message):
 
         elif acao == "autorizar_pedido":
             pid = parametros.get("pedido_id") or intencao.get("pedido_id")
+            obs = parametros.get("observacao")
             try:
                 pid = int(pid)
             except (TypeError, ValueError):
                 return {"response": "Qual é o ID do pedido que você quer autorizar?"}
-            obs = parametros.get("observacao")
-            autorizar_pedido(pid, obs)
-            return {"response": f"✅ Pedido {pid} autorizado com sucesso!"}
+
+            # Verifica status do pedido
+            pedido = buscar_pedido_por_id(pid)
+            if not pedido:
+                return {"response": f"Pedido {pid} não encontrado."}
+            status_atual = pedido.get("status")
+            if status_atual != "PENDING":
+                return {"response": f"❌ Não é possível autorizar o pedido {pid}. Status atual: {status_atual}"}
+
+            # Tenta autorizar
+            sucesso = autorizar_pedido(pid, obs)
+            if sucesso:
+                return {"response": f"✅ Pedido {pid} autorizado com sucesso!"}
+            else:
+                avisos = obter_aviso_pedido(pid)
+                msg_avisos = f"\nAvisos do pedido:\n{avisos}" if avisos else ""
+                return {"response": f"❌ Falha ao autorizar o pedido {pid}.{msg_avisos}"}
 
         elif acao == "reprovar_pedido":
             pid = parametros.get("pedido_id") or intencao.get("pedido_id")
+            obs = parametros.get("observacao")
             try:
                 pid = int(pid)
             except (TypeError, ValueError):
                 return {"response": "Qual é o ID do pedido que você quer reprovar?"}
-            obs = parametros.get("observacao")
-            reprovar_pedido(pid, obs)
-            return {"response": f"🚫 Pedido {pid} reprovado com sucesso!"}
+            sucesso = reprovar_pedido(pid, obs)
+            if sucesso:
+                return {"response": f"🚫 Pedido {pid} reprovado com sucesso!"}
+            else:
+                avisos = obter_aviso_pedido(pid)
+                msg_avisos = f"\nAvisos do pedido:\n{avisos}" if avisos else ""
+                return {"response": f"❌ Falha ao reprovar o pedido {pid}.{msg_avisos}"}
 
         elif acao == "relatorio_pdf":
             pid = parametros.get("pedido_id") or intencao.get("pedido_id")
