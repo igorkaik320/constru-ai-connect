@@ -87,12 +87,11 @@ export const ChatMessage = ({ message, isLoading, onAction }: ChatMessageProps) 
               ))}
             </div>
           ) : (
-            <ReactMarkdown
-              remarkPlugins={[remarkGfm]}
-              className="prose prose-invert prose-sm max-w-none text-foreground"
-            >
-              {message.content}
-            </ReactMarkdown>
+            <div className="prose prose-invert prose-sm max-w-none text-foreground">
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                {message.content}
+              </ReactMarkdown>
+            </div>
           )}
         </div>
       </div>
