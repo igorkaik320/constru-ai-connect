@@ -1,17 +1,24 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 import openai
 import os
 import json
+import io
+import re
+import logging
 
 from sienge.sienge_pedidos import (
     listar_pedidos_pendentes,
     itens_pedido,
     autorizar_pedido,
     reprovar_pedido,
-    gerar_relatorio_pdf
+    gerar_relatorio_pdf_bytes
 )
+
+# === Configuração de logging ===
+logging.basicConfig(level=logging.INFO)
 
 app = FastAPI()
 
@@ -72,6 +79,11 @@ def entender_intencao(texto: str):
     except Exception as e:
         return {"acao": None, "erro": str(e)}
 
+# === Função para extrair ID de pedido com regex ===
+def extrair_id(texto: str):
+    match = re.search(r'\d+', texto)
+    return int(match.group()) if match else None
+
 # === Processamento de comandos Sienge diretos ===
 def processar_comando_sienge(texto: str):
     texto = texto.lower().strip()
@@ -83,10 +95,10 @@ def processar_comando_sienge(texto: str):
             return "Nenhum pedido pendente encontrado."
 
         elif "itens do pedido" in texto or "pedido" in texto:
-            pid = ''.join(filter(str.isdigit, texto))
+            pid = extrair_id(texto)
             if not pid:
                 return "❌ Não consegui identificar o ID do pedido."
-            itens = itens_pedido(int(pid))
+            itens = itens_pedido(pid)
             if not itens:
                 return "Nenhum item encontrado."
             resposta = "Itens do Pedido Nº | Descrição | Qtd | Valor\n"
@@ -101,81 +113,72 @@ def processar_comando_sienge(texto: str):
             return resposta
 
         elif "autorizar" in texto or "autoriza" in texto:
-            pid = ''.join(filter(str.isdigit, texto))
+            pid = extrair_id(texto)
             if not pid:
                 return "❌ Não consegui identificar o ID do pedido."
-            autorizar_pedido(int(pid))
+            autorizar_pedido(pid)
             return f"✅ Pedido {pid} autorizado com sucesso!"
 
         elif "reprovar" in texto or "reprova" in texto:
-            pid = ''.join(filter(str.isdigit, texto))
+            pid = extrair_id(texto)
             if not pid:
                 return "❌ Não consegui identificar o ID do pedido."
-            reprovar_pedido(int(pid))
+            reprovar_pedido(pid)
             return f"🚫 Pedido {pid} reprovado com sucesso!"
 
         elif "relatorio" in texto or "pdf" in texto:
-            pid = ''.join(filter(str.isdigit, texto))
+            pid = extrair_id(texto)
             if not pid:
                 return "❌ Não consegui identificar o ID do pedido para gerar PDF."
-            caminho = gerar_relatorio_pdf(int(pid))
-            if caminho:
-                return f"PDF do pedido {pid} gerado com sucesso: {caminho}"
-            return "❌ Erro ao gerar relatório PDF."
+            return f"/pedido/{pid}/pdf"  # Frontend baixa via endpoint
 
         else:
             return "Desculpe, não entendi o que você deseja fazer no Sienge."
 
     except Exception as e:
+        logging.error(f"Erro ao processar comando: {e}")
         return f"❌ Erro ao processar comando: {e}"
 
-# === Endpoint principal do chat ===
+# === Endpoint para chat ===
 @app.post("/mensagem")
 def receber_mensagem(msg: Message):
-    # Tenta interpretar via IA
     intencao = entender_intencao(msg.text)
 
     if intencao.get("acao") == "itens_pedido":
-        pedido_id = int(intencao.get("pedido_id", 0))
-        if pedido_id:
-            itens = itens_pedido(pedido_id)
-            if itens:
-                resposta = "Itens do Pedido Nº | Descrição | Qtd | Valor\n"
-                total = 0
-                for i in itens:
-                    desc = i.get("resourceDescription") or i.get("itemDescription") or i.get("description") or "Sem descrição"
-                    qtd = i.get("quantity", 0)
-                    val = i.get("unitPrice") or i.get("totalAmount") or 0.0
-                    total += qtd * val
-                    resposta += f"{i.get('itemNumber','?')} | {desc} | {qtd} | {val:.2f}\n"
-                resposta += f"Total: {total:.2f}"
-                return {"resposta": resposta}
-            return {"resposta": "Nenhum item encontrado."}
+        pid = int(intencao.get("pedido_id", 0))
+        if pid:
+            return {"resposta": processar_comando_sienge(f"pedido {pid}")}
         return {"resposta": "❌ Não consegui identificar o ID do pedido."}
 
     elif intencao.get("acao") == "autorizar_pedido":
-        pedido_id = int(intencao.get("pedido_id", 0))
-        if pedido_id:
-            autorizar_pedido(pedido_id)
-            return {"resposta": f"✅ Pedido {pedido_id} autorizado com sucesso!"}
+        pid = int(intencao.get("pedido_id", 0))
+        if pid:
+            autorizar_pedido(pid)
+            return {"resposta": f"✅ Pedido {pid} autorizado com sucesso!"}
         return {"resposta": "❌ Não consegui identificar o ID do pedido."}
 
     elif intencao.get("acao") == "reprovar_pedido":
-        pedido_id = int(intencao.get("pedido_id", 0))
-        if pedido_id:
-            reprovar_pedido(pedido_id)
-            return {"resposta": f"🚫 Pedido {pedido_id} reprovado com sucesso!"}
+        pid = int(intencao.get("pedido_id", 0))
+        if pid:
+            reprovar_pedido(pid)
+            return {"resposta": f"🚫 Pedido {pid} reprovado com sucesso!"}
         return {"resposta": "❌ Não consegui identificar o ID do pedido."}
 
     elif intencao.get("acao") == "relatorio_pdf":
-        pedido_id = int(intencao.get("pedido_id", 0))
-        if pedido_id:
-            caminho = gerar_relatorio_pdf(pedido_id)
-            if caminho:
-                return {"resposta": f"PDF do pedido {pedido_id} gerado: {caminho}"}
-            return {"resposta": "❌ Erro ao gerar PDF."}
+        pid = int(intencao.get("pedido_id", 0))
+        if pid:
+            return {"resposta": f"/pedido/{pid}/pdf"}
         return {"resposta": "❌ Não consegui identificar o ID do pedido."}
 
     # fallback para comandos diretos
     resposta_direta = processar_comando_sienge(msg.text)
     return {"resposta": resposta_direta}
+
+# === Endpoint para baixar PDF diretamente ===
+@app.get("/pedido/{pedido_id}/pdf")
+def download_pdf(pedido_id: int):
+    conteudo = gerar_relatorio_pdf_bytes(pedido_id)
+    if not conteudo:
+        return {"erro": "PDF não gerado"}
+    return StreamingResponse(io.BytesIO(conteudo), media_type="application/pdf",
+                             headers={"Content-Disposition": f"attachment; filename=pedido_{pedido_id}.pdf"})
