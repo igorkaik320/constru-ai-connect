@@ -3,7 +3,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import openai
 import os
-from datetime import datetime
 import json
 
 # === Importa funções Sienge já existentes ===
@@ -121,7 +120,8 @@ async def message_endpoint(msg: Message):
 
         # === Itens do pedido ===
         elif acao == "itens_pedido":
-            pid = parametros.get("pedido_id")
+            # Corrigido: pega do 'parametros' ou direto do 'intencao'
+            pid = parametros.get("pedido_id") or intencao.get("pedido_id")
             try:
                 pid = int(pid)
             except (TypeError, ValueError):
@@ -133,7 +133,7 @@ async def message_endpoint(msg: Message):
 
         # === Autorizar pedido ===
         elif acao == "autorizar_pedido":
-            pid = parametros.get("pedido_id")
+            pid = parametros.get("pedido_id") or intencao.get("pedido_id")
             try:
                 pid = int(pid)
             except (TypeError, ValueError):
@@ -144,7 +144,7 @@ async def message_endpoint(msg: Message):
 
         # === Reprovar pedido ===
         elif acao == "reprovar_pedido":
-            pid = parametros.get("pedido_id")
+            pid = parametros.get("pedido_id") or intencao.get("pedido_id")
             try:
                 pid = int(pid)
             except (TypeError, ValueError):
