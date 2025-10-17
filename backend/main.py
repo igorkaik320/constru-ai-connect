@@ -1,146 +1,163 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-import requests
-from base64 import b64encode
-import logging
+from pydantic import BaseModel
+import os
+import json
+import openai
 
-# === CONFIGURAÇÕES ===
-subdominio = "cctcontrol"
-usuario = "cctcontrol-api"
-senha = "gTCWxPf3txvQXwOXn65tz1tA9cdOZZlD"
+from sienge.sienge_pedidos import (
+    listar_pedidos_pendentes,
+    itens_pedido,
+    autorizar_pedido,
+    reprovar_pedido,
+    gerar_relatorio_pdf
+)
 
-BASE_URL = f"https://api.sienge.com.br/{subdominio}/public/api/v1"
-
-# Token de autenticação
-token = b64encode(f"{usuario}:{senha}".encode()).decode()
-headers = {
-    "Authorization": f"Basic {token}",
-    "accept": "application/json",
-    "Content-Type": "application/json"
-}
-
-# Configura logging
-logging.basicConfig(level=logging.INFO)
-
-# === CRIAR APP FASTAPI ===
+# === CONFIGURA FASTAPI ===
 app = FastAPI()
 
-# Permitir CORS se for chamar de frontend
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
+    allow_credentials=True,
     allow_methods=["*"],
-    allow_headers=["*"]
+    allow_headers=["*"],
 )
 
-# === FUNÇÕES INTERNAS (sienge) ===
+# === MODELO DE MENSAGEM ===
+class Message(BaseModel):
+    user: str
+    text: str
 
-def listar_pedidos_pendentes(data_inicio=None, data_fim=None):
-    url = f"{BASE_URL}/purchase-orders?status=PENDING"
-    if data_inicio:
-        url += f"&startDate={data_inicio}"
-    if data_fim:
-        url += f"&endDate={data_fim}"
-    r = requests.get(url, headers=headers)
-    logging.info(f"listar_pedidos_pendentes: {url} -> {r.status_code}")
-    if r.status_code == 200:
-        data = r.json()
-        return [p for p in data.get("results", []) if not p.get("authorized", False)]
-    return []
+# === FUNÇÃO PARA FORMATAR ITENS DO PEDIDO ===
+def formatar_itens(itens):
+    if not itens:
+        return "Nenhum item encontrado."
+    linhas = ["Itens do Pedido"]
+    header = f"{'Nº':<4} | {'Descrição':<35} | {'Qtd':<6} | {'Valor':<10}"
+    linhas.append(header)
+    linhas.append("-" * len(header))
+    total = 0
+    for i, item in enumerate(itens, 1):
+        desc = item.get("resourceDescription") or item.get("itemDescription") or item.get("description","Sem descrição")
+        qtd = item.get("quantity",0)
+        valor = item.get("unitPrice") or item.get("totalAmount",0.0)
+        total += valor * qtd
+        linhas.append(f"{i:<4} | {desc:<35} | {qtd:<6} | {valor:<10.2f}")
+    linhas.append("-" * len(header))
+    linhas.append(f"Total: {total:.2f}")
+    return "\n".join(linhas)
 
-def itens_pedido(purchase_order_id):
-    url = f"{BASE_URL}/purchase-orders/{purchase_order_id}/items"
-    r = requests.get(url, headers=headers)
-    logging.info(f"itens_pedido: {url} -> {r.status_code}")
-    if r.status_code == 200:
-        return r.json().get("results", [])
-    return []
+# === FUNÇÃO PARA ENTENDER INTENÇÃO VIA IA ===
+def entender_intencao(texto: str):
+    openai.api_key = os.getenv("OPENAI_API_KEY")
+    if not openai.api_key:
+        return {"acao": None, "erro": "Chave OpenAI não configurada."}
 
-def autorizar_pedido(purchase_order_id, observacao=None):
-    url = f"{BASE_URL}/purchase-orders/{purchase_order_id}/authorize"
-    body = {"observation": observacao} if observacao else {}
-    r = requests.put(url, headers=headers, json=body)
-    logging.info(f"autorizar_pedido: {url} -> {r.status_code}")
-    return r.status_code in [200, 204]
+    prompt = f"""
+Você é uma IA especialista no sistema Sienge.
+Dada a mensagem de um usuário, identifique a intenção e retorne em JSON.
 
-def reprovar_pedido(purchase_order_id, observacao=None):
-    url = f"{BASE_URL}/purchase-orders/{purchase_order_id}/disapprove"
-    body = {"observation": observacao} if observacao else {}
-    r = requests.put(url, headers=headers, json=body)
-    logging.info(f"reprovar_pedido: {url} -> {r.status_code}")
-    return r.status_code in [200, 204]
+Possíveis ações:
+- listar_pedidos_pendentes (data_inicio?, data_fim?)
+- itens_pedido (pedido_id)
+- autorizar_pedido (pedido_id, observacao?)
+- reprovar_pedido (pedido_id, observacao?)
+- gerar_boleto (cliente?, titulo?, parcela?)
+- gerar_imposto_renda (cliente?)
+- saldo_devedor (cliente?)
+- relatorio_pdf (pedido_id)
 
-def gerar_relatorio_pdf_bytes(purchase_order_id):
-    url = f"{BASE_URL}/purchase-orders/{purchase_order_id}/analysis/pdf"
-    r = requests.get(url, headers=headers)
-    logging.info(f"gerar_relatorio_pdf_bytes: {url} -> {r.status_code}")
-    if r.status_code == 200:
-        return r.content
-    return None
+Se algum parâmetro estiver faltando, pergunte ao usuário para confirmar.
+Se não entender, devolva {{ "acao": null }}.
 
-def buscar_pedido_por_id(purchase_order_id):
-    url = f"{BASE_URL}/purchase-orders/{purchase_order_id}"
-    r = requests.get(url, headers=headers)
-    logging.info(f"buscar_pedido_por_id: {url} -> {r.status_code}")
-    if r.status_code == 200:
-        return r.json()
-    return None
+Mensagem: "{texto}"
+"""
+    try:
+        response = openai.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.2
+        )
+        conteudo = response.choices[0].message.content
+        conteudo = conteudo.replace("```json", "").replace("```", "").strip()
+        try:
+            data = json.loads(conteudo)
+            return data
+        except Exception:
+            return {"acao": None, "erro": "Resposta IA inválida", "detalhes": conteudo}
+    except Exception as e:
+        return {"acao": None, "erro": str(e)}
 
-def listar_pedidos_por_usuario(usuario_nome):
-    url = f"{BASE_URL}/purchase-orders"
-    r = requests.get(url, headers=headers)
-    logging.info(f"listar_pedidos_por_usuario: {url} -> {r.status_code}")
-    if r.status_code == 200:
-        data = r.json().get("results", [])
-        return [p for p in data if usuario_nome.lower() in (p.get("userName") or "").lower()]
-    return []
+# === ENDPOINT DE MENSAGEM DO CHAT ===
+@app.post("/mensagem")
+async def message_endpoint(msg: Message):
+    print(f"📩 Mensagem recebida: {msg.user} -> {msg.text}")
 
-def listar_pedidos_por_periodo(data_inicio, data_fim):
-    url = f"{BASE_URL}/purchase-orders?startDate={data_inicio}&endDate={data_fim}"
-    r = requests.get(url, headers=headers)
-    logging.info(f"listar_pedidos_por_periodo: {url} -> {r.status_code}")
-    if r.status_code == 200:
-        return r.json().get("results", [])
-    return []
+    intencao = entender_intencao(msg.text)
+    print("🧠 Interpretação IA:", intencao)
 
-# === ROTAS FASTAPI ===
+    acao = intencao.get("acao")
+    parametros = intencao.get("parametros", {})
 
-@app.get("/pedidos/pendentes")
-def api_listar_pedidos_pendentes(data_inicio: str = None, data_fim: str = None):
-    return listar_pedidos_pendentes(data_inicio, data_fim)
+    if not acao:
+        return {"response": "Desculpe, não entendi o que você deseja fazer no Sienge."}
 
-@app.get("/pedidos/{purchase_order_id}/itens")
-def api_itens_pedido(purchase_order_id: str):
-    return itens_pedido(purchase_order_id)
+    try:
+        # === AÇÕES DE PEDIDO ===
+        if acao == "listar_pedidos_pendentes":
+            data_inicio = parametros.get("data_inicio")
+            data_fim = parametros.get("data_fim")
+            pedidos = listar_pedidos_pendentes(data_inicio, data_fim)
+            if not pedidos:
+                return {"response": "Nenhum pedido pendente encontrado."}
+            resposta = "\n".join([f"ID {p['id']} | {p['status']} | {p['date']}" for p in pedidos])
+            return {"response": resposta}
 
-@app.put("/pedidos/{purchase_order_id}/autorizar")
-def api_autorizar_pedido(purchase_order_id: str, observacao: str = None):
-    sucesso = autorizar_pedido(purchase_order_id, observacao)
-    return {"sucesso": sucesso}
+        elif acao == "itens_pedido":
+            pid = parametros.get("pedido_id") or intencao.get("pedido_id")
+            try:
+                pid = int(pid)
+            except (TypeError, ValueError):
+                return {"response": "Não consegui identificar o ID do pedido. Pode informar novamente?"}
+            itens = itens_pedido(pid)
+            resposta = formatar_itens(itens)
+            return {"response": resposta}
 
-@app.put("/pedidos/{purchase_order_id}/reprovar")
-def api_reprovar_pedido(purchase_order_id: str, observacao: str = None):
-    sucesso = reprovar_pedido(purchase_order_id, observacao)
-    return {"sucesso": sucesso}
+        elif acao == "autorizar_pedido":
+            pid = parametros.get("pedido_id") or intencao.get("pedido_id")
+            try:
+                pid = int(pid)
+            except (TypeError, ValueError):
+                return {"response": "Qual é o ID do pedido que você quer autorizar?"}
+            obs = parametros.get("observacao")
+            autorizar_pedido(pid, obs)
+            return {"response": f"✅ Pedido {pid} autorizado com sucesso!"}
 
-@app.get("/pedidos/{purchase_order_id}/pdf")
-def api_gerar_pdf(purchase_order_id: str):
-    conteudo = gerar_relatorio_pdf_bytes(purchase_order_id)
-    if conteudo:
-        return {"pdf_bytes": b64encode(conteudo).decode()}  # Retorna base64
-    return {"erro": "Não foi possível gerar PDF"}
+        elif acao == "reprovar_pedido":
+            pid = parametros.get("pedido_id") or intencao.get("pedido_id")
+            try:
+                pid = int(pid)
+            except (TypeError, ValueError):
+                return {"response": "Qual é o ID do pedido que você quer reprovar?"}
+            obs = parametros.get("observacao")
+            reprovar_pedido(pid, obs)
+            return {"response": f"🚫 Pedido {pid} reprovado com sucesso!"}
 
-@app.get("/pedidos/{purchase_order_id}")
-def api_buscar_pedido_por_id(purchase_order_id: str):
-    pedido = buscar_pedido_por_id(purchase_order_id)
-    if pedido:
-        return pedido
-    return {"erro": "Pedido não encontrado"}
+        elif acao == "relatorio_pdf":
+            pid = parametros.get("pedido_id") or intencao.get("pedido_id")
+            try:
+                pid = int(pid)
+            except (TypeError, ValueError):
+                return {"response": "Não consegui identificar o ID do pedido para gerar PDF."}
+            caminho = gerar_relatorio_pdf(pid)
+            if caminho:
+                return {"response": f"PDF do pedido {pid} gerado: {caminho}"}
+            return {"response": "❌ Erro ao gerar PDF."}
 
-@app.get("/pedidos/usuario/{usuario_nome}")
-def api_listar_por_usuario(usuario_nome: str):
-    return listar_pedidos_por_usuario(usuario_nome)
+        else:
+            return {"response": f"Ação {acao} reconhecida, mas ainda não implementada."}
 
-@app.get("/pedidos/periodo")
-def api_listar_por_periodo(data_inicio: str, data_fim: str):
-    return listar_pedidos_por_periodo(data_inicio, data_fim)
+    except Exception as e:
+        print("❌ Erro ao executar ação:", e)
+        return {"response": f"Erro ao executar ação {acao}: {e}"}
