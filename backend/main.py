@@ -4,23 +4,23 @@ from pydantic import BaseModel
 import os
 import json
 import logging
+import base64
+import openai
 
-# Importar funções do módulo sienge_pedidos
 from sienge.sienge_pedidos import (
     listar_pedidos_pendentes,
     itens_pedido,
     autorizar_pedido,
     reprovar_pedido,
-    gerar_relatorio_pdf,
+    gerar_relatorio_pdf_bytes,
     buscar_pedido_por_id
 )
 
-# Configuração de logging
 logging.basicConfig(level=logging.INFO)
 
 app = FastAPI()
 
-# CORS
+# Permitir CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -29,12 +29,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Modelo de mensagem
 class Message(BaseModel):
     user: str
     text: str
 
-# === Formatar itens do pedido ===
 def formatar_itens(itens):
     if not itens:
         return "Nenhum item encontrado."
@@ -53,9 +51,7 @@ def formatar_itens(itens):
     linhas.append(f"Total: {total:.2f}")
     return "\n".join(linhas)
 
-# === Função IA (OpenAI) para interpretar intenções ===
 def entender_intencao(texto: str):
-    import openai
     openai.api_key = os.getenv("OPENAI_API_KEY")
     if not openai.api_key:
         return {"acao": None, "erro": "Chave OpenAI não configurada."}
@@ -91,7 +87,6 @@ Mensagem: "{texto}"
     except Exception as e:
         return {"acao": None, "erro": str(e)}
 
-# === Função para obter avisos do pedido ===
 def obter_aviso_pedido(pedido_id):
     pedido = buscar_pedido_por_id(pedido_id)
     if not pedido:
@@ -101,13 +96,12 @@ def obter_aviso_pedido(pedido_id):
         return None
     return "\n".join([f"- {a.get('message')}" for a in avisos])
 
-# === Endpoint principal ===
 @app.post("/mensagem")
 async def message_endpoint(msg: Message):
     logging.info(f"📩 Mensagem recebida: {msg.user} -> {msg.text}")
 
     intencao = entender_intencao(msg.text)
-    logging.info("🧠 Interpretação IA: %s", intencao)
+    logging.info("🧠 Interpretação IA:", intencao)
 
     acao = intencao.get("acao")
     parametros = intencao.get("parametros", {})
@@ -122,69 +116,61 @@ async def message_endpoint(msg: Message):
             pedidos = listar_pedidos_pendentes(data_inicio, data_fim)
             if not pedidos:
                 return {"response": "Nenhum pedido pendente encontrado."}
-            resposta = "\n".join([f"ID {p['id']} | {p['status']} | {p['date']}" for p in pedidos])
-            return {"response": resposta}
+            return {"response": "\n".join([f"ID {p['id']} | {p['status']} | {p['date']}" for p in pedidos])}
 
         elif acao == "itens_pedido":
             pid = parametros.get("pedido_id") or intencao.get("pedido_id")
-            try:
-                pid = int(pid)
-            except (TypeError, ValueError):
-                return {"response": "Não consegui identificar o ID do pedido. Pode informar novamente?"}
+            try: pid = int(pid)
+            except: return {"response": "ID do pedido inválido."}
             itens = itens_pedido(pid)
             return {"response": formatar_itens(itens)}
 
         elif acao == "autorizar_pedido":
             pid = parametros.get("pedido_id") or intencao.get("pedido_id")
             obs = parametros.get("observacao")
-            try:
-                pid = int(pid)
-            except (TypeError, ValueError):
-                return {"response": "Qual é o ID do pedido que você quer autorizar?"}
-
+            try: pid = int(pid)
+            except: return {"response": "ID do pedido inválido."}
             pedido = buscar_pedido_por_id(pid)
             if not pedido:
                 return {"response": f"Pedido {pid} não encontrado."}
             if pedido.get("status") != "PENDING":
-                return {"response": f"❌ Não é possível autorizar o pedido {pid}. Status atual: {pedido.get('status')}"}
-
+                return {"response": f"❌ Pedido {pid} não pode ser autorizado. Status: {pedido.get('status')}"}
             sucesso = autorizar_pedido(pid, obs)
             if sucesso:
                 return {"response": f"✅ Pedido {pid} autorizado com sucesso!"}
-            else:
-                avisos = obter_aviso_pedido(pid)
-                msg_avisos = f"\nAvisos do pedido:\n{avisos}" if avisos else ""
-                return {"response": f"❌ Falha ao autorizar o pedido {pid}.{msg_avisos}"}
+            avisos = obter_aviso_pedido(pid)
+            msg_avisos = f"\nAvisos do pedido:\n{avisos}" if avisos else ""
+            return {"response": f"❌ Falha ao autorizar o pedido {pid}.{msg_avisos}"}
 
         elif acao == "reprovar_pedido":
             pid = parametros.get("pedido_id") or intencao.get("pedido_id")
             obs = parametros.get("observacao")
-            try:
-                pid = int(pid)
-            except (TypeError, ValueError):
-                return {"response": "Qual é o ID do pedido que você quer reprovar?"}
+            try: pid = int(pid)
+            except: return {"response": "ID do pedido inválido."}
             sucesso = reprovar_pedido(pid, obs)
             if sucesso:
                 return {"response": f"🚫 Pedido {pid} reprovado com sucesso!"}
-            else:
-                avisos = obter_aviso_pedido(pid)
-                msg_avisos = f"\nAvisos do pedido:\n{avisos}" if avisos else ""
-                return {"response": f"❌ Falha ao reprovar o pedido {pid}.{msg_avisos}"}
+            avisos = obter_aviso_pedido(pid)
+            msg_avisos = f"\nAvisos do pedido:\n{avisos}" if avisos else ""
+            return {"response": f"❌ Falha ao reprovar o pedido {pid}.{msg_avisos}"}
 
         elif acao == "relatorio_pdf":
             pid = parametros.get("pedido_id") or intencao.get("pedido_id")
-            try:
-                pid = int(pid)
-            except (TypeError, ValueError):
-                return {"response": "Não consegui identificar o ID do pedido para gerar PDF."}
-            caminho = gerar_relatorio_pdf(pid)
-            if caminho:
-                return {"response": f"PDF do pedido {pid} gerado: {caminho}"}
-            return {"response": "❌ Erro ao gerar PDF. Verifique se o pedido possui análise disponível."}
+            try: pid = int(pid)
+            except: return {"response": "ID do pedido inválido para gerar PDF."}
+            pdf_bytes = gerar_relatorio_pdf_bytes(pid)
+            if pdf_bytes:
+                pdf_base64 = base64.b64encode(pdf_bytes).decode()
+                return {
+                    "response": f"PDF do pedido {pid} gerado com sucesso!",
+                    "pdf_base64": pdf_base64,
+                    "filename": f"pedido_{pid}.pdf"
+                }
+            return {"response": "❌ Erro ao gerar PDF."}
 
         else:
-            return {"response": f"Ação {acao} reconhecida, mas ainda não implementada."}
+            return {"response": f"Ação {acao} reconhecida, mas não implementada."}
 
     except Exception as e:
-        logging.error("❌ Erro ao executar ação: %s", e)
+        logging.error("Erro ao executar ação:", exc_info=e)
         return {"response": f"Erro ao executar ação {acao}: {e}"}
