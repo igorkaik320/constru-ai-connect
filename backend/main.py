@@ -187,7 +187,9 @@ async def message_endpoint(msg: Message):
             caminho = gerar_relatorio_pdf(pid)
             if caminho:
                 return {"response": f"PDF do pedido {pid} gerado: {caminho}"}
-            return {"response": "❌ Erro ao gerar PDF."}
+            avisos = obter_aviso_pedido(pid)
+            msg_avisos = f"\nAvisos do pedido:\n{avisos}" if avisos else ""
+            return {"response": f"❌ Erro ao gerar PDF.{msg_avisos}"}
 
         else:
             return {"response": f"Ação {acao} reconhecida, mas ainda não implementada."}
