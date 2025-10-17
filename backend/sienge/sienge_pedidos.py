@@ -28,7 +28,6 @@ def listar_pedidos_pendentes(data_inicio=None, data_fim=None):
         url += f"&startDate={data_inicio}"
     if data_fim:
         url += f"&endDate={data_fim}"
-
     r = requests.get(url, headers=headers)
     logging.info(f"listar_pedidos_pendentes: {url} -> {r.status_code}")
     if r.status_code == 200:
@@ -67,10 +66,6 @@ def gerar_relatorio_pdf_bytes(purchase_order_id):
     return None
 
 def gerar_relatorio_pdf(purchase_order_id):
-    """
-    Função que gera o PDF do pedido e salva em arquivo.
-    Retorna o caminho do arquivo salvo ou None se houver erro.
-    """
     conteudo = gerar_relatorio_pdf_bytes(purchase_order_id)
     if conteudo:
         filename = f"relatorio_pedido_{purchase_order_id}.pdf"
@@ -80,3 +75,30 @@ def gerar_relatorio_pdf(purchase_order_id):
         return filename
     logging.warning(f"Não foi possível gerar PDF para o pedido {purchase_order_id}")
     return None
+
+# === NOVOS ENDPOINTS ===
+
+def buscar_pedido_por_id(purchase_order_id):
+    url = f"{BASE_URL}/purchase-orders/{purchase_order_id}"
+    r = requests.get(url, headers=headers)
+    logging.info(f"buscar_pedido_por_id: {url} -> {r.status_code}")
+    if r.status_code == 200:
+        return r.json()
+    return None
+
+def listar_pedidos_por_usuario(usuario_nome):
+    url = f"{BASE_URL}/purchase-orders"
+    r = requests.get(url, headers=headers)
+    logging.info(f"listar_pedidos_por_usuario: {url} -> {r.status_code}")
+    if r.status_code == 200:
+        data = r.json().get("results", [])
+        return [p for p in data if usuario_nome.lower() in (p.get("userName") or "").lower()]
+    return []
+
+def listar_pedidos_por_periodo(data_inicio, data_fim):
+    url = f"{BASE_URL}/purchase-orders?startDate={data_inicio}&endDate={data_fim}"
+    r = requests.get(url, headers=headers)
+    logging.info(f"listar_pedidos_por_periodo: {url} -> {r.status_code}")
+    if r.status_code == 200:
+        return r.json().get("results", [])
+    return []
