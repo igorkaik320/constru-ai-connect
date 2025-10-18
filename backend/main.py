@@ -6,7 +6,8 @@ import json
 import logging
 import base64
 
-from sienge_pedidos import (
+# Import atualizado conforme estrutura do projeto
+from sienge.sienge_pedidos import (
     listar_pedidos_pendentes,
     buscar_pedido_por_id,
     itens_pedido,
@@ -133,11 +134,12 @@ async def mensagem(msg: Message):
             tabela = formatar_itens_tabela(itens)
 
             resumo = f"""🧾 *Resumo do Pedido {pid}:*
+🗓️ Data: {pedido.get('date', 'Não informado')}
 🏢 Empresa: Não informado
 🏗️ Obra: Não informado
 💰 Centro de Custo: Não informado
 🤝 Fornecedor: {pedido.get('supplierName', 'Não informado')} (CNPJ -)
-🧾 Condição de Pagamento: {pedido.get('paymentCondition', 'Não informada')}
+💳 Condição de Pagamento: {pedido.get('paymentCondition', 'Não informada')}
 📝 Observações: {pedido.get('notes', 'Sem observações')}
 💵 Valor Total: {fmt(pedido.get('totalAmount', 0))}
 """
