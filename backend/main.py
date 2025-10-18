@@ -19,7 +19,7 @@ logging.basicConfig(level=logging.INFO)
 
 app = FastAPI()
 
-# Permitir CORS
+# === Permitir CORS ===
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -33,7 +33,10 @@ class Message(BaseModel):
     user: str
     text: str
 
-# === Formatar itens do pedido para tabela ===
+# === Memória de contexto por usuário ===
+contexto_usuarios = {}
+
+# === Função auxiliar para formatar tabela ===
 def formatar_itens_tabela(itens):
     if not itens:
         return None
@@ -51,7 +54,7 @@ def formatar_itens_tabela(itens):
         rows.append([i, codigo, desc, qtd, unid, round(valor_unit, 2), round(total, 2)])
     return {"headers": headers, "rows": rows, "total": round(total_geral, 2)}
 
-# === Função IA para entender intenção ===
+# === Interpretação da intenção via OpenAI ===
 def entender_intencao(texto: str):
     import openai
     openai.api_key = os.getenv("OPENAI_API_KEY")
@@ -69,9 +72,6 @@ Possíveis ações:
 - reprovar_pedido (pedido_id, observacao?)
 - relatorio_pdf (pedido_id)
 
-Se algum parâmetro estiver faltando, pergunte ao usuário para confirmar.
-Se não entender, devolva {{ "acao": null }}.
-
 Mensagem: "{texto}"
 """
     try:
@@ -82,11 +82,9 @@ Mensagem: "{texto}"
         )
         conteudo = response.choices[0].message.content
         conteudo = conteudo.replace("```json", "").replace("```", "").strip()
-        try:
-            return json.loads(conteudo)
-        except Exception:
-            return {"acao": None, "erro": "Resposta IA inválida", "detalhes": conteudo}
+        return json.loads(conteudo)
     except Exception as e:
+        logging.error(f"Erro IA: {e}")
         return {"acao": None, "erro": str(e)}
 
 # === Função para obter avisos do pedido ===
@@ -99,18 +97,15 @@ def obter_aviso_pedido(pedido_id):
         return None
     return "\n".join([f"- {a.get('message')}" for a in avisos])
 
-# === Endpoint principal de mensagens ===
+# === ENDPOINT PRINCIPAL ===
 @app.post("/mensagem")
 async def message_endpoint(msg: Message):
     logging.info(f"📩 Mensagem recebida: {msg.user} -> {msg.text}")
 
     intencao = entender_intencao(msg.text)
-    logging.info("🧠 Interpretação IA:", intencao)
-
     acao = intencao.get("acao")
     parametros = intencao.get("parametros", {})
 
-    # Botões iniciais
     menu_inicial = [
         {"label": "Pedidos Pendentes", "action": "listar_pedidos_pendentes"},
         {"label": "Emitir PDF", "action": "relatorio_pdf"},
@@ -121,90 +116,99 @@ async def message_endpoint(msg: Message):
         return {"text": "Escolha uma opção:", "buttons": menu_inicial}
 
     try:
-        # ======================
-        # Listar pedidos pendentes
-        # ======================
+        # === LISTAR PEDIDOS PENDENTES ===
         if acao == "listar_pedidos_pendentes":
-            data_inicio = parametros.get("data_inicio")
-            data_fim = parametros.get("data_fim")
-            pedidos = listar_pedidos_pendentes(data_inicio, data_fim)
+            pedidos = listar_pedidos_pendentes()
             if not pedidos:
                 return {"text": "Nenhum pedido pendente encontrado.", "buttons": menu_inicial}
-            rows = [{"label": f"ID {p['id']} | {p['status']} | {p['date']}", "action": "itens_pedido", "pedido_id": p['id']} for p in pedidos]
-            return {"text": "Pedidos pendentes de autorização:", "buttons": rows}
 
-        # ======================
-        # Visualizar itens do pedido
-        # ======================
+            botoes = [
+                {"label": f"Pedido {p['id']} - {p.get('status', 'PENDENTE')}", "action": "itens_pedido", "pedido_id": p["id"]}
+                for p in pedidos
+            ]
+            return {"text": "📋 Pedidos pendentes de autorização:", "buttons": botoes, "type": "pedidos"}
+
+        # === ITENS DO PEDIDO ===
         elif acao == "itens_pedido":
             pid = parametros.get("pedido_id") or intencao.get("pedido_id")
-            try: pid = int(pid)
-            except: return {"text": "ID do pedido inválido.", "buttons": menu_inicial}
+
+            if not pid and msg.user in contexto_usuarios:
+                pid = contexto_usuarios[msg.user].get("ultimo_pedido")
+
+            if not pid:
+                return {"text": "Informe o número do pedido para visualizar os itens.", "buttons": menu_inicial}
+
+            pid = int(pid)
             itens = itens_pedido(pid)
+            if not itens:
+                return {"text": f"❌ Nenhum item encontrado no pedido {pid}."}
+
             tabela = formatar_itens_tabela(itens)
+            contexto_usuarios[msg.user] = {"ultimo_pedido": pid}
+
             botoes = [
                 {"label": "Autorizar Pedido", "action": "autorizar_pedido", "pedido_id": pid},
                 {"label": "Reprovar Pedido", "action": "reprovar_pedido", "pedido_id": pid},
                 {"label": "Voltar ao Menu", "action": "menu_inicial"}
             ]
-            return {"text": f"Itens do pedido {pid}:", "table": tabela, "buttons": botoes}
+            return {"text": f"📦 Itens do pedido {pid}:", "table": tabela, "buttons": botoes, "type": "itens"}
 
-        # ======================
-        # Autorizar pedido
-        # ======================
+        # === AUTORIZAR PEDIDO ===
         elif acao == "autorizar_pedido":
             pid = parametros.get("pedido_id") or intencao.get("pedido_id")
-            obs = parametros.get("observacao")
-            try: pid = int(pid)
-            except: return {"text": "ID do pedido inválido.", "buttons": menu_inicial}
+            if not pid and msg.user in contexto_usuarios:
+                pid = contexto_usuarios[msg.user].get("ultimo_pedido")
+
+            if not pid:
+                return {"text": "Qual pedido deseja autorizar?", "buttons": menu_inicial}
+
+            pid = int(pid)
             pedido = buscar_pedido_por_id(pid)
             if not pedido:
                 return {"text": f"Pedido {pid} não encontrado.", "buttons": menu_inicial}
+
             if pedido.get("status") != "PENDING":
                 return {"text": f"❌ Não é possível autorizar o pedido {pid}. Status atual: {pedido.get('status')}", "buttons": menu_inicial}
-            sucesso = autorizar_pedido(pid, obs)
+
+            sucesso = autorizar_pedido(pid)
             if sucesso:
                 return {"text": f"✅ Pedido {pid} autorizado com sucesso!", "buttons": menu_inicial}
-            avisos = obter_aviso_pedido(pid)
-            msg_avisos = f"\nAvisos do pedido:\n{avisos}" if avisos else ""
-            return {"text": f"❌ Falha ao autorizar o pedido {pid}.{msg_avisos}", "buttons": menu_inicial}
+            return {"text": f"❌ Falha ao autorizar o pedido {pid}.", "buttons": menu_inicial}
 
-        # ======================
-        # Reprovar pedido
-        # ======================
+        # === REPROVAR PEDIDO ===
         elif acao == "reprovar_pedido":
             pid = parametros.get("pedido_id") or intencao.get("pedido_id")
-            obs = parametros.get("observacao")
-            try: pid = int(pid)
-            except: return {"text": "ID do pedido inválido.", "buttons": menu_inicial}
-            sucesso = reprovar_pedido(pid, obs)
+            if not pid and msg.user in contexto_usuarios:
+                pid = contexto_usuarios[msg.user].get("ultimo_pedido")
+
+            if not pid:
+                return {"text": "Qual pedido deseja reprovar?", "buttons": menu_inicial}
+
+            pid = int(pid)
+            sucesso = reprovar_pedido(pid)
             if sucesso:
                 return {"text": f"🚫 Pedido {pid} reprovado com sucesso!", "buttons": menu_inicial}
-            avisos = obter_aviso_pedido(pid)
-            msg_avisos = f"\nAvisos do pedido:\n{avisos}" if avisos else ""
-            return {"text": f"❌ Falha ao reprovar o pedido {pid}.{msg_avisos}", "buttons": menu_inicial}
+            return {"text": f"❌ Falha ao reprovar o pedido {pid}.", "buttons": menu_inicial}
 
-        # ======================
-        # Gerar PDF do pedido
-        # ======================
+        # === GERAR PDF ===
         elif acao == "relatorio_pdf":
             pid = parametros.get("pedido_id") or intencao.get("pedido_id")
-            try: pid = int(pid)
-            except: return {"text": "ID do pedido inválido para gerar PDF.", "buttons": menu_inicial}
+            if not pid and msg.user in contexto_usuarios:
+                pid = contexto_usuarios[msg.user].get("ultimo_pedido")
+
+            if not pid:
+                return {"text": "Qual pedido deseja gerar o PDF?", "buttons": menu_inicial}
+
+            pid = int(pid)
             pdf_bytes = gerar_relatorio_pdf_bytes(pid)
             if pdf_bytes:
                 pdf_base64 = base64.b64encode(pdf_bytes).decode()
-                return {
-                    "text": f"PDF do pedido {pid} gerado com sucesso!",
-                    "pdf_base64": pdf_base64,
-                    "filename": f"pedido_{pid}.pdf",
-                    "buttons": menu_inicial
-                }
-            return {"text": "❌ Erro ao gerar PDF.", "buttons": menu_inicial}
+                return {"text": f"PDF do pedido {pid} gerado com sucesso!", "pdf_base64": pdf_base64, "filename": f"pedido_{pid}.pdf"}
+            return {"text": f"❌ Erro ao gerar PDF do pedido {pid}."}
 
         else:
-            return {"text": f"Ação {acao} reconhecida, mas não implementada.", "buttons": menu_inicial}
+            return {"text": f"Ação '{acao}' reconhecida, mas não implementada.", "buttons": menu_inicial}
 
     except Exception as e:
-        logging.error("Erro ao executar ação:", exc_info=e)
-        return {"text": f"Erro ao executar ação {acao}: {e}", "buttons": menu_inicial}
+        logging.exception(f"Erro geral ao processar ação {acao}: {e}")
+        return {"text": f"⚠️ Erro ao executar ação {acao}: {str(e)}", "buttons": menu_inicial}
