@@ -5,11 +5,12 @@ import os
 import json
 import logging
 import base64
+import openai
 
 from sienge.sienge_pedidos import (
     listar_pedidos_pendentes,
-    itens_pedido,
     buscar_pedido_por_id,
+    itens_pedido,
     autorizar_pedido,
     reprovar_pedido,
     gerar_relatorio_pdf_bytes
@@ -18,7 +19,7 @@ from sienge.sienge_pedidos import (
 logging.basicConfig(level=logging.INFO)
 app = FastAPI()
 
-# CORS
+# === CORS ===
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -27,48 +28,42 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Modelo
+# === MODELO DE MENSAGEM ===
 class Message(BaseModel):
     user: str
     text: str
 
-# === IA para entender comandos ===
-def entender_intencao(texto: str):
-    import openai
-    openai.api_key = os.getenv("OPENAI_API_KEY")
 
+# === INTERPRETAÇÃO DA MENSAGEM ===
+def entender_intencao(texto: str):
+    openai.api_key = os.getenv("OPENAI_API_KEY")
     prompt = f"""
-Você é uma assistente inteligente e educada chamada Constru.IA, especialista no sistema Sienge.
-Identifique o que o usuário deseja fazer e retorne um JSON com o formato:
+Você é uma assistente chamada *Constru.IA*, educada e especialista no sistema Sienge.
+Analise a mensagem do usuário e diga o que ele quer fazer.
+
+Responda em JSON no formato:
 {{
-  "acao": "...",
-  "parametros": {{ ... }}
+  "acao": "listar_pedidos_pendentes" | "itens_pedido" | "autorizar_pedido" | "reprovar_pedido" | "relatorio_pdf",
+  "parametros": {{ "pedido_id": <número opcional> }}
 }}
 
-Ações possíveis:
-- listar_pedidos_pendentes
-- itens_pedido (pedido_id)
-- autorizar_pedido (pedido_id)
-- reprovar_pedido (pedido_id)
-- relatorio_pdf (pedido_id)
-
-Mensagem do usuário: "{texto}"
+Mensagem: "{texto}"
 """
-
     try:
-        resposta = openai.chat.completions.create(
+        response = openai.chat.completions.create(
             model="gpt-4o-mini",
             messages=[{"role": "user", "content": prompt}],
             temperature=0.2
         )
-        conteudo = resposta.choices[0].message.content
+        conteudo = response.choices[0].message.content
         conteudo = conteudo.replace("```json", "").replace("```", "").strip()
         return json.loads(conteudo)
     except Exception as e:
         logging.error(f"Erro IA: {e}")
         return {"acao": None, "erro": str(e)}
 
-# === Função para formatar tabela ===
+
+# === FORMATAÇÃO DE TABELA DE ITENS ===
 def formatar_itens_tabela(itens):
     if not itens:
         return None
@@ -77,7 +72,7 @@ def formatar_itens_tabela(itens):
     total = 0
     for item in itens:
         cod = item.get("resourceCode") or "-"
-        desc = item.get("resourceDescription") or item.get("description")
+        desc = item.get("resourceDescription") or item.get("description", "")
         qtd = item.get("quantity", 0)
         unid = item.get("unit", "")
         valor_unit = item.get("unitPrice", 0)
@@ -86,11 +81,11 @@ def formatar_itens_tabela(itens):
         rows.append([cod, desc, qtd, unid, valor_unit, subtotal])
     return {"headers": headers, "rows": rows, "total": total}
 
+
 # === ENDPOINT PRINCIPAL ===
 @app.post("/mensagem")
 async def mensagem(msg: Message):
     logging.info(f"📩 Mensagem recebida: {msg.user} -> {msg.text}")
-
     intencao = entender_intencao(msg.text)
     acao = intencao.get("acao")
     params = intencao.get("parametros", {})
@@ -105,24 +100,26 @@ async def mensagem(msg: Message):
         return {"text": "Olá 👋! Sou a Constru.IA. Em que posso ajudar hoje?", "buttons": menu}
 
     try:
-        # === LISTAR PEDIDOS ===
+        # === LISTAR PEDIDOS PENDENTES ===
         if acao == "listar_pedidos_pendentes":
             pedidos = listar_pedidos_pendentes()
             if not pedidos:
                 return {"text": "📭 Nenhum pedido pendente de autorização encontrado.", "buttons": menu}
 
-            resposta = "📋 *Pedidos pendentes de autorização:*\n\n"
+            texto = "📋 *Pedidos pendentes de autorização:*\n\n"
             botoes = []
             for p in pedidos:
-                resposta += f"• Pedido {p['id']} — {p.get('supplierName', 'Fornecedor não informado')}\n"
+                fornecedor = p.get("supplierName", "Fornecedor não informado")
+                valor = p.get("totalAmount", 0)
+                texto += f"• Pedido {p['id']} — {fornecedor} — R$ {valor:,.2f}\n"
                 botoes.append({
                     "label": f"Pedido {p['id']}",
                     "action": "itens_pedido",
                     "pedido_id": p["id"]
                 })
-            return {"text": resposta.strip(), "buttons": botoes}
+            return {"text": texto.strip(), "buttons": botoes}
 
-        # === ITENS DO PEDIDO ===
+        # === MOSTRAR ITENS DO PEDIDO ===
         elif acao == "itens_pedido":
             pid = params.get("pedido_id")
             if not pid:
@@ -132,21 +129,20 @@ async def mensagem(msg: Message):
             itens = itens_pedido(pid)
 
             if not pedido:
-                return {"text": f"❌ Não encontrei o pedido {pid}.", "buttons": menu}
+                return {"text": f"❌ Pedido {pid} não encontrado.", "buttons": menu}
             if not itens:
-                logging.warning(f"Nenhum item encontrado no pedido {pid}.")
                 return {"text": f"❌ Nenhum item encontrado no pedido {pid}.", "buttons": menu}
 
             resumo = f"""
-Olá 👋! Segue abaixo o resumo do pedido **{pid}**:
+📄 *Resumo do Pedido {pid}:*
 
-🏢 *Empresa:* {pedido.get('enterpriseName', 'Não informado')}
-🏗️ *Obra:* {pedido.get('jobName', 'Não informado')}
-💰 *Centro de Custo:* {pedido.get('costCenterName', 'Não informado')}
-📦 *Fornecedor:* {pedido.get('supplierName', 'Não informado')} (CNPJ {pedido.get('supplierCnpj', '-')})
-🧾 *Condição de Pagamento:* {pedido.get('paymentCondition', 'Não informado')}
-📝 *Observações:* {pedido.get('observation', 'Sem observações')}
-💵 *Valor Total:* R$ {pedido.get('totalAmount', 0):,.2f}
+🏢 Empresa: {pedido.get('enterprise', {}).get('name', 'Não informado')}
+🏗️ Obra: {pedido.get('job', {}).get('name', 'Não informado')}
+💰 Centro de Custo: {pedido.get('costCenter', {}).get('name', 'Não informado')}
+📦 Fornecedor: {pedido.get('supplier', {}).get('corporateName', 'Não informado')} (CNPJ {pedido.get('supplier', {}).get('cnpj', '-')})
+🧾 Condição de Pagamento: {pedido.get('paymentCondition', {}).get('description', 'Não informado')}
+📝 Observações: {pedido.get('observation', 'Sem observações')}
+💵 Valor Total: R$ {pedido.get('totalAmount', 0):,.2f}
 """
 
             tabela = formatar_itens_tabela(itens)
@@ -155,24 +151,27 @@ Olá 👋! Segue abaixo o resumo do pedido **{pid}**:
                 {"label": "Reprovar Pedido", "action": "reprovar_pedido", "pedido_id": pid},
                 {"label": "Voltar ao Menu", "action": "menu_inicial"}
             ]
-
             return {"text": resumo, "table": tabela, "buttons": botoes}
 
         # === AUTORIZAR ===
         elif acao == "autorizar_pedido":
             pid = params.get("pedido_id")
+            if not pid:
+                return {"text": "Informe o número do pedido a autorizar.", "buttons": menu}
             sucesso = autorizar_pedido(pid)
             if sucesso:
                 return {"text": f"✅ Pedido {pid} autorizado com sucesso!", "buttons": menu}
-            return {"text": f"❌ Não foi possível autorizar o pedido {pid}.", "buttons": menu}
+            return {"text": f"❌ Falha ao autorizar o pedido {pid}.", "buttons": menu}
 
         # === REPROVAR ===
         elif acao == "reprovar_pedido":
             pid = params.get("pedido_id")
+            if not pid:
+                return {"text": "Informe o número do pedido a reprovar.", "buttons": menu}
             sucesso = reprovar_pedido(pid)
             if sucesso:
                 return {"text": f"🚫 Pedido {pid} reprovado com sucesso!", "buttons": menu}
-            return {"text": f"❌ Não foi possível reprovar o pedido {pid}.", "buttons": menu}
+            return {"text": f"❌ Falha ao reprovar o pedido {pid}.", "buttons": menu}
 
         # === PDF ===
         elif acao == "relatorio_pdf":
@@ -183,8 +182,9 @@ Olá 👋! Segue abaixo o resumo do pedido **{pid}**:
                 return {"text": f"📄 PDF do pedido {pid} gerado com sucesso!", "pdf_base64": pdf_base64}
             return {"text": "❌ Erro ao gerar o PDF.", "buttons": menu}
 
-        return {"text": f"Desculpe, não entendi o comando '{acao}'.", "buttons": menu}
+        else:
+            return {"text": "Desculpe, não entendi o que você quis dizer.", "buttons": menu}
 
     except Exception as e:
         logging.error("Erro geral:", exc_info=e)
-        return {"text": f"Ocorreu um erro ao executar a ação: {e}", "buttons": menu}
+        return {"text": f"Ocorreu um erro ao processar sua solicitação: {e}", "buttons": menu}
