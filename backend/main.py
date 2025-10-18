@@ -2,21 +2,20 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import logging
-import base64
+
 from sienge.sienge_pedidos import (
     listar_pedidos_pendentes,
     buscar_pedido_por_id,
-    buscar_empresa,
+    itens_pedido,
     buscar_obra,
     buscar_centro_custo,
     buscar_fornecedor,
-    itens_pedido,
+    buscar_totalizacao,
     autorizar_pedido,
     reprovar_pedido,
-    gerar_relatorio_pdf_bytes
+    gerar_pdf_pedido_base64
 )
 
-logging.basicConfig(level=logging.INFO)
 app = FastAPI()
 
 app.add_middleware(
@@ -31,118 +30,101 @@ class Message(BaseModel):
     user: str
     text: str
 
-def fmt(valor):
-    try:
-        return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-    except:
-        return "R$ 0,00"
+logging.basicConfig(level=logging.INFO)
+
+@app.get("/")
+def root():
+    return {"message": "🚀 Constru.IA backend ativo!"}
+
 
 @app.post("/mensagem")
-async def mensagem(msg: Message):
+def mensagem(msg: Message):
     texto = msg.text.lower().strip()
     logging.info(f"📩 Mensagem recebida: {msg.user} -> {texto}")
 
-    botoes_iniciais = [
-        {"label": "Pedidos Pendentes", "action": "listar_pedidos_pendentes"},
-        {"label": "Emitir PDF", "action": "relatorio_pdf"},
-        {"label": "Ver Itens do Pedido", "action": "itens_pedido"}
-    ]
+    try:
+        # --- Pedidos pendentes ---
+        if "pedidos pendentes" in texto:
+            pedidos = listar_pedidos_pendentes()
+            if not pedidos:
+                return {"resposta": "📭 Nenhum pedido pendente de autorização encontrado."}
 
-    if any(p in texto for p in ["menu", "voltar", "início", "inicio"]):
-        return {"text": "Escolha uma opção abaixo 👇", "buttons": botoes_iniciais}
+            resposta = "📋 Pedidos pendentes de autorização:\n\n"
+            for p in pedidos:
+                resposta += f"• Pedido {p.get('id')} — Fornecedor não informado — R$ {p.get('totalAmount', 0):,.2f}\n"
+            return {"resposta": resposta}
 
-    # === LISTAR PEDIDOS ===
-    if "pendente" in texto:
-        pedidos = listar_pedidos_pendentes()
-        if not pedidos:
-            return {"text": "📭 Nenhum pedido pendente de autorização encontrado.", "buttons": botoes_iniciais}
-        resposta = "📋 *Pedidos pendentes de autorização:*\n\n"
-        for p in pedidos:
-            resposta += f"• Pedido {p['id']} — {p.get('supplierName', 'Fornecedor não informado')} — {fmt(p.get('totalAmount', 0))}\n"
-        return {"text": resposta.strip(), "buttons": botoes_iniciais}
+        # --- Itens do pedido ---
+        if "itens" in texto and "pedido" in texto:
+            numero = [t for t in texto.split() if t.isdigit()]
+            if not numero:
+                return {"resposta": "Por favor, informe o número do pedido."}
 
-    # === ITENS DO PEDIDO ===
-    if "item" in texto or "itens" in texto:
-        pid = "".join(filter(str.isdigit, texto))
-        if not pid:
-            return {"text": "Por favor, informe o número do pedido.", "buttons": botoes_iniciais}
+            pedido_id = numero[0]
+            pedido = buscar_pedido_por_id(pedido_id)
+            if not pedido:
+                return {"resposta": f"❌ Pedido {pedido_id} não encontrado."}
 
-        pedido = buscar_pedido_por_id(pid)
-        if not pedido:
-            return {"text": f"❌ Pedido {pid} não encontrado.", "buttons": botoes_iniciais}
+            itens = itens_pedido(pedido_id)
+            totalizacao = buscar_totalizacao(pedido_id)
+            obra = buscar_obra(pedido.get("buildingId"))
+            cc = buscar_centro_custo(pedido.get("costCenterId"))
+            fornecedor = buscar_fornecedor(pedido.get("supplierId"))
 
-        empresa = buscar_empresa(pedido.get("companyId")) or {}
-        obra = buscar_obra(pedido.get("buildingId")) or {}
-        centro = buscar_centro_custo(pedido.get("costCenterId")) or {}
-        forn = buscar_fornecedor(pedido.get("supplierId")) or {}
+            resumo = (
+                f"🧾 Resumo do Pedido {pedido.get('id')}: "
+                f"🗓️ Data: {pedido.get('date', '-')}\n"
+                f"🏗️ Obra: {obra}\n"
+                f"💰 Centro de Custo: {cc}\n"
+                f"🤝 Fornecedor: {fornecedor}\n"
+                f"👤 Comprador: {pedido.get('buyerId', '-')}\n"
+                f"💳 Condição de Pagamento: {pedido.get('paymentCondition', '-')}\n"
+                f"🧮 Valor Total: R$ {pedido.get('totalAmount', 0):,.2f}\n"
+            )
 
-        nome_empresa = empresa.get("name") or pedido.get("companyName", "Não informado")
-        nome_obra = obra.get("name") or f"Obra {pedido.get('buildingId', 'Não informada')}"
-        nome_cc = centro.get("description", "Não informado")
-        nome_forn = forn.get("name") or pedido.get("supplierName", "Não informado")
-        cnpj_forn = forn.get("taxpayerId", "-")
+            if pedido.get("notes"):
+                resumo += f"📝 Observações: {pedido.get('notes')}\n"
 
-        itens = itens_pedido(pid)
-        linhas = "\n".join([
-            f"🔹 {i.get('resourceDescription')} ({i.get('quantity')} {i.get('unitOfMeasure')}) — {fmt(i.get('unitPrice'))}"
-            for i in itens
-        ]) or "Nenhum item encontrado."
+            resumo += "\n📦 Itens:\n"
+            for item in itens:
+                resumo += f"🔹 {item.get('resourceDescription', 'Item')} ({item.get('quantity')} {item.get('unitOfMeasure')}) — R$ {item.get('unitPrice', 0):,.2f}\n"
 
-        observacoes = pedido.get("notes", "Sem observações").replace("\\r\\n", "\n")
+            return {"resposta": resumo}
 
-        texto_resumo = f"""
-🧾 *Resumo do Pedido {pid}:*
-🗓️ Data: {pedido.get('date', 'Não informado')}
-🏢 Empresa: {nome_empresa}
-🏗️ Obra: {nome_obra}
-💰 Centro de Custo: {nome_cc}
-🤝 Fornecedor: {nome_forn} (CNPJ {cnpj_forn})
-💳 Condição de Pagamento: {pedido.get('paymentCondition', 'Não informada')}
-📝 Observações: {observacoes}
-💵 Valor Total: {fmt(pedido.get('totalAmount', 0))}
+        # --- Autorizar pedido ---
+        if texto.startswith("autorizar_pedido"):
+            pedido_id = texto.split()[-1]
+            status = autorizar_pedido(pedido_id)
+            return {"resposta": "✅ Pedido autorizado!" if status == 200 else "❌ Falha ao autorizar o pedido."}
 
-📦 *Itens:*
-{linhas}
-        """.strip()
+        # --- Reprovar pedido ---
+        if texto.startswith("reprovar_pedido"):
+            pedido_id = texto.split()[-1]
+            status = reprovar_pedido(pedido_id)
+            return {"resposta": "🚫 Pedido reprovado!" if status == 200 or status == 204 else "❌ Falha ao reprovar o pedido."}
 
-        botoes = [
-            {"label": "Autorizar Pedido", "action": "autorizar_pedido", "pedido_id": pid},
-            {"label": "Reprovar Pedido", "action": "reprovar_pedido", "pedido_id": pid},
-            {"label": "Voltar ao Menu", "action": "menu_inicial"}
-        ]
-        return {"text": texto_resumo, "buttons": botoes}
+        # --- Gerar PDF ---
+        if "emitir pdf" in texto or "gerar pdf" in texto:
+            numero = [t for t in texto.split() if t.isdigit()]
+            if not numero:
+                return {"resposta": "Por favor, informe o número do pedido para gerar o PDF."}
 
-    # === AUTORIZAR ===
-    if "autorizar" in texto:
-        pid = "".join(filter(str.isdigit, texto))
-        if not pid:
-            return {"text": "Informe o número do pedido para autorizar.", "buttons": botoes_iniciais}
-        sucesso = autorizar_pedido(pid)
-        return {"text": "✅ Pedido autorizado!" if sucesso else "❌ Falha ao autorizar.", "buttons": botoes_iniciais}
+            pedido_id = numero[0]
+            pedido = buscar_pedido_por_id(pedido_id)
+            if not pedido:
+                return {"resposta": f"❌ Pedido {pedido_id} não encontrado."}
 
-    # === REPROVAR ===
-    if "reprovar" in texto:
-        pid = "".join(filter(str.isdigit, texto))
-        if not pid:
-            return {"text": "Informe o número do pedido para reprovar.", "buttons": botoes_iniciais}
-        sucesso = reprovar_pedido(pid)
-        return {"text": "🚫 Pedido reprovado!" if sucesso else "❌ Falha ao reprovar.", "buttons": botoes_iniciais}
+            itens = itens_pedido(pedido_id)
+            totalizacao = buscar_totalizacao(pedido_id)
+            pdf_base64 = gerar_pdf_pedido_base64(pedido, itens, totalizacao)
+            return {
+                "resposta": f"📄 PDF do pedido {pedido_id} gerado com sucesso!",
+                "pdf_base64": pdf_base64
+            }
 
-    # === EMITIR PDF ===
-    if "pdf" in texto or "relatorio" in texto:
-        pid = "".join(filter(str.isdigit, texto))
-        if not pid:
-            return {"text": "Por favor, informe o número do pedido para gerar o PDF.", "buttons": botoes_iniciais}
+        # --- Caso não entenda ---
+        return {"resposta": "Desculpe, não entendi sua solicitação."}
 
-        pdf_bytes = gerar_relatorio_pdf_bytes(pid)
-        if not pdf_bytes:
-            return {"text": f"❌ Não foi possível gerar o PDF do pedido {pid}.", "buttons": botoes_iniciais}
-
-        pdf_base64 = base64.b64encode(pdf_bytes).decode("utf-8")
-        link = f"data:application/pdf;base64,{pdf_base64}"
-        return {
-            "text": f"📄 PDF do Pedido {pid} gerado com sucesso!\n\n[🔗 Clique aqui para visualizar o relatório]({link})",
-            "buttons": botoes_iniciais
-        }
-
-    return {"text": "Desculpe, não entendi sua solicitação.", "buttons": botoes_iniciais}
+    except Exception as e:
+        logging.error("Erro geral:", exc_info=True)
+        return {"resposta": f"Ocorreu um erro: {str(e)}"}
