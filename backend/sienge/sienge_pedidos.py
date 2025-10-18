@@ -32,7 +32,11 @@ def listar_pedidos_pendentes(data_inicio=None, data_fim=None):
     if r.status_code == 200:
         data = r.json()
         pedidos = data.get("results", [])
-        return [p for p in pedidos if p.get("status") == "PENDING"]
+        pendentes = [
+            p for p in pedidos
+            if p.get("status") == "PENDING" and p.get("canBeAuthorized", False)
+        ]
+        return pendentes
     logging.error(f"Erro ao listar pedidos: {r.text}")
     return []
 
@@ -44,11 +48,11 @@ def itens_pedido(purchase_order_id):
         logging.error(f"Erro ao buscar pedido {purchase_order_id}: {r.text}")
         return []
     data = r.json()
-    itens = data.get("items") or data.get("purchaseItems") or data.get("orderItems") or []
-    if not isinstance(itens, list):
-        logging.warning(f"Formato inesperado para itens do pedido {purchase_order_id}.")
-        return []
-    return itens
+    for key in ["items", "purchaseItems", "orderItems", "purchaseOrderItems"]:
+        if key in data and isinstance(data[key], list):
+            return data[key]
+    logging.warning(f"Nenhum item encontrado no pedido {purchase_order_id}.")
+    return []
 
 def autorizar_pedido(purchase_order_id, observacao=None):
     url = f"{BASE_URL}/purchase-orders/{purchase_order_id}/authorize"
