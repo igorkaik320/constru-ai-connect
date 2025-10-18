@@ -5,11 +5,10 @@ import logging
 # === CONFIGURAÇÕES ===
 subdominio = "cctcontrol"
 usuario = "cctcontrol-api"
-senha = "9SQ2MaNrFOeZOOuOAqeSRy7bYWYDDf85"  # Substitua pela sua senha real
+senha = "9SQ2MaNrFOeZOOuOAqeSRy7bYWYDDf85"
 
 BASE_URL = f"https://api.sienge.com.br/{subdominio}/public/api/v1"
 
-# Token de autenticação
 token = b64encode(f"{usuario}:{senha}".encode()).decode()
 headers = {
     "Authorization": f"Basic {token}",
@@ -17,7 +16,6 @@ headers = {
     "Content-Type": "application/json"
 }
 
-# Configura logging
 logging.basicConfig(level=logging.INFO)
 
 # === FUNÇÕES ===
@@ -28,20 +26,31 @@ def listar_pedidos_pendentes(data_inicio=None, data_fim=None):
         url += f"&startDate={data_inicio}"
     if data_fim:
         url += f"&endDate={data_fim}"
+
     r = requests.get(url, headers=headers)
     logging.info(f"listar_pedidos_pendentes: {url} -> {r.status_code}")
     if r.status_code == 200:
         data = r.json()
-        return [p for p in data.get("results", []) if not p.get("authorized", False)]
+        pedidos = data.get("results", [])
+        # 🔹 Garante que só retorne pedidos realmente pendentes
+        return [p for p in pedidos if p.get("status") == "PENDING"]
+    logging.error(f"Erro ao listar pedidos: {r.text}")
     return []
 
 def itens_pedido(purchase_order_id):
-    url = f"{BASE_URL}/purchase-orders/{purchase_order_id}/items"
+    url = f"{BASE_URL}/purchase-orders/{purchase_order_id}"
     r = requests.get(url, headers=headers)
     logging.info(f"itens_pedido: {url} -> {r.status_code}")
-    if r.status_code == 200:
-        return r.json().get("results", [])
-    return []
+    if r.status_code != 200:
+        logging.error(f"Erro ao buscar pedido {purchase_order_id}: {r.text}")
+        return []
+
+    data = r.json()
+    # 🔹 Pega itens dentro da estrutura correta
+    itens = data.get("items") or data.get("purchaseItems") or data.get("orderItems") or []
+    if not itens:
+        logging.warning(f"Nenhum item encontrado no pedido {purchase_order_id}.")
+    return itens
 
 def autorizar_pedido(purchase_order_id, observacao=None):
     url = f"{BASE_URL}/purchase-orders/{purchase_order_id}/authorize"
@@ -64,16 +73,6 @@ def gerar_relatorio_pdf_bytes(purchase_order_id):
     if r.status_code == 200 and r.content:
         return r.content
     logging.warning(f"Falha ao gerar PDF: status={r.status_code}")
-    return None
-
-def gerar_relatorio_pdf(purchase_order_id):
-    conteudo = gerar_relatorio_pdf_bytes(purchase_order_id)
-    if conteudo:
-        filename = f"relatorio_pedido_{purchase_order_id}.pdf"
-        with open(filename, "wb") as f:
-            f.write(conteudo)
-        logging.info(f"PDF gerado: {filename}")
-        return filename
     return None
 
 def buscar_pedido_por_id(purchase_order_id):
