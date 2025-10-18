@@ -2,7 +2,7 @@ import requests
 import logging
 from base64 import b64encode
 
-# Configuração
+# === CONFIGURAÇÃO ===
 subdominio = "cctcontrol"
 usuario = "cctcontrol-api"
 senha = "9SQ2MaNrFOeZOOuOAqeSRy7bYWYDDf85"
@@ -17,17 +17,25 @@ headers = {
 
 logging.basicConfig(level=logging.INFO)
 
-# === Funções ===
+# === FUNÇÕES ===
 
 def listar_pedidos_pendentes():
     url = f"{BASE_URL}/purchase-orders?status=PENDING"
     r = requests.get(url, headers=headers)
     logging.info(f"listar_pedidos_pendentes: {url} -> {r.status_code}")
+
     if r.status_code == 200:
         data = r.json()
         pedidos = data.get("results", [])
-        # Apenas pedidos realmente pendentes de autorização
-        return [p for p in pedidos if p.get("status") == "PENDING" and not p.get("authorized", False)]
+        # Filtrar apenas pedidos realmente pendentes
+        pendentes = [
+            p for p in pedidos
+            if p.get("status") == "PENDING"
+            and not p.get("authorized", False)
+            and not p.get("disapproved", False)
+        ]
+        logging.info(f"🧾 {len(pendentes)} pedidos pendentes encontrados.")
+        return pendentes
     return []
 
 def buscar_pedido_por_id(pid):
