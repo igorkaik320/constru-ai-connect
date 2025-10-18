@@ -1,135 +1,142 @@
-import { useState, useEffect } from "react";
-import { ChatHeader } from "@/components/ChatHeader";
-import { ChatInput } from "@/components/ChatInput";
-import { ChatMessage } from "@/components/ChatMessage";
-import axios from "axios";
+import React, { useState, useRef, useEffect } from "react";
+import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter, AlertDialogAction, AlertDialogCancel } from "@/components/ui/alert-dialog";
+import { Send, Bot, User } from "lucide-react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 interface Message {
   role: "user" | "assistant";
   content: string;
-  type?: "text" | "pedidos" | "itens";
-  pedidos?: any[];
-  table?: { headers: string[]; rows: any[][]; total?: number };
-  buttons?: { label: string; action: string; pedido_id?: number }[];
 }
 
 export const Chat = () => {
   const [messages, setMessages] = useState<Message[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [confirmDialog, setConfirmDialog] = useState<{
-    open: boolean;
-    action?: "autorizar" | "reprovar";
-    pedido_id?: number;
-  }>({ open: false });
+  const [input, setInput] = useState("");
+  const endRef = useRef<HTMLDivElement | null>(null);
 
-  // Função para enviar mensagem para o backend
-  const sendMessage = async (text: string) => {
-    const userMsg: Message = { role: "user", content: text };
-    setMessages((prev) => [...prev, userMsg]);
-    setLoading(true);
-
-    try {
-      const { data } = await axios.post("/mensagem", { user: "usuario", text });
-      const botMsg: Message = { role: "assistant", content: data.response };
-
-      // Se o backend retornar pedidos ou tabela
-      if (data.pedidos) botMsg.pedidos = data.pedidos;
-      if (data.table) botMsg.table = data.table;
-      if (data.buttons) botMsg.buttons = data.buttons;
-
-      setMessages((prev) => [...prev, botMsg]);
-    } catch (err) {
-      setMessages((prev) => [
-        ...prev,
-        { role: "assistant", content: "Erro ao se comunicar com o servidor." },
-      ]);
-    } finally {
-      setLoading(false);
-    }
+  const scrollToBottom = () => {
+    endRef.current?.scrollIntoView({ behavior: "smooth" });
   };
 
-  // Função quando o usuário clica em um botão de ação (Autorizar/Reprovar)
-  const handleAction = (pedido_id: number, acao: "autorizar" | "reprovar") => {
-    setConfirmDialog({ open: true, action: acao, pedido_id });
-  };
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages]);
 
-  const confirmAction = async () => {
-    if (!confirmDialog.pedido_id || !confirmDialog.action) return;
-    setConfirmDialog({ open: false });
+  const handleSend = () => {
+    if (!input.trim()) return;
 
-    // Enviar mensagem pro backend simulando comando do usuário
-    const comando = `${confirmDialog.action} pedido ${confirmDialog.pedido_id}`;
-    await sendMessage(comando);
-  };
+    const newMessage: Message = { role: "user", content: input };
+    setMessages((prev) => [...prev, newMessage]);
+    setInput("");
 
-  // Botões iniciais
-  const handleInitialButton = (acao: string) => {
-    switch (acao) {
-      case "listar_pendentes":
-        sendMessage("Listar pedidos pendentes de autorização");
-        break;
-      case "ver_itens":
-        sendMessage("Ver itens de um pedido específico");
-        break;
-      case "gerar_pdf":
-        sendMessage("Gerar PDF do pedido");
-        break;
-      default:
-        break;
-    }
+    // Simula resposta da IA
+    setTimeout(() => {
+      const botMessage: Message = {
+        role: "assistant",
+        content: `👋 Claro! Aqui está a resposta para: **${input}**`,
+      };
+      setMessages((prev) => [...prev, botMessage]);
+    }, 700);
   };
 
   return (
-    <div className="flex flex-col h-full">
-      <ChatHeader />
-
-      {/* Botões iniciais */}
-      <div className="flex gap-2 p-4 bg-card/50 border-b border-border">
-        <Button onClick={() => handleInitialButton("listar_pendentes")}>
-          Pedidos Pendentes
-        </Button>
-        <Button onClick={() => handleInitialButton("ver_itens")}>
-          Ver Itens
-        </Button>
-        <Button onClick={() => handleInitialButton("gerar_pdf")}>
-          Gerar PDF
-        </Button>
-      </div>
+    <div className="flex flex-col h-screen bg-[hsl(240,10%,4%)] text-foreground">
+      {/* Cabeçalho */}
+      <header className="flex items-center justify-center h-14 border-b border-gray-800">
+        <h1 className="text-lg font-semibold bg-gradient-to-r from-purple-400 to-blue-400 bg-clip-text text-transparent">
+          constru.ia
+        </h1>
+      </header>
 
       {/* Mensagens */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
-        {messages.map((m, i) => (
-          <ChatMessage
-            key={i}
-            message={m}
-            isLoading={loading && i === messages.length - 1}
-            onAction={handleAction}
-          />
-        ))}
-      </div>
+      <main className="flex-1 overflow-y-auto px-4 py-6 space-y-4 scrollbar-thin scrollbar-thumb-gray-700 scrollbar-track-transparent">
+        {messages.length === 0 ? (
+          <div className="flex flex-col items-center justify-center h-full text-center space-y-3 text-gray-400">
+            <Bot className="w-12 h-12 text-purple-500/80" />
+            <h2 className="text-lg font-medium">Bem-vindo ao constru.ia 👋</h2>
+            <p className="max-w-md text-sm text-gray-500">
+              Envie uma mensagem para começar. Use termos como{" "}
+              <span className="text-purple-400 font-medium">
+                "pedidos pendentes"
+              </span>{" "}
+              ou{" "}
+              <span className="text-purple-400 font-medium">
+                "itens do pedido 123"
+              </span>
+              .
+            </p>
+          </div>
+        ) : (
+          messages.map((msg, i) => (
+            <ChatMessage key={i} message={msg} />
+          ))
+        )}
+        <div ref={endRef} />
+      </main>
 
       {/* Input */}
-      <ChatInput onSend={sendMessage} isLoading={loading} />
-
-      {/* Dialogo de confirmação */}
-      <AlertDialog open={confirmDialog.open} onOpenChange={(o) => setConfirmDialog((prev) => ({ ...prev, open: o }))}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Confirmação</AlertDialogTitle>
-            <AlertDialogDescription>
-              Tem certeza que deseja {confirmDialog.action} o pedido {confirmDialog.pedido_id}?
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancelar</AlertDialogCancel>
-            <AlertDialogAction onClick={confirmAction}>
-              Confirmar
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <footer className="border-t border-gray-800 p-4">
+        <div className="max-w-3xl mx-auto flex gap-2 items-end">
+          <textarea
+            className="flex-1 bg-[#1a1a1d] text-gray-100 text-sm p-3 rounded-xl border border-gray-700 focus:ring-2 focus:ring-purple-500/40 resize-none"
+            placeholder="Digite sua mensagem..."
+            rows={1}
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && (e.preventDefault(), handleSend())}
+          />
+          <Button
+            onClick={handleSend}
+            className="p-3 bg-gradient-to-br from-purple-500 to-blue-500 hover:opacity-90 transition rounded-xl"
+          >
+            <Send className="w-4 h-4" />
+          </Button>
+        </div>
+      </footer>
     </div>
   );
 };
+
+interface ChatMessageProps {
+  message: Message;
+}
+
+const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
+  const isUser = message.role === "user";
+
+  return (
+    <div
+      className={cn(
+        "flex items-start fade-in",
+        isUser ? "justify-end" : "justify-start"
+      )}
+    >
+      {!isUser && (
+        <div className="flex items-center justify-center w-8 h-8 rounded-full bg-gradient-to-br from-purple-500 to-blue-500 mr-2">
+          <Bot className="w-4 h-4 text-white" />
+        </div>
+      )}
+
+      <div
+        className={cn(
+          "px-4 py-2 rounded-2xl max-w-[700px] text-sm leading-relaxed whitespace-pre-wrap shadow-md transition-all",
+          isUser
+            ? "bg-[hsl(220,80%,55%)] text-white rounded-br-none"
+            : "bg-[#1e1e20] text-gray-100 rounded-bl-none"
+        )}
+      >
+        <ReactMarkdown remarkPlugins={[remarkGfm]}>
+          {message.content}
+        </ReactMarkdown>
+      </div>
+
+      {isUser && (
+        <div className="flex items-center justify-center w-8 h-8 rounded-full bg-blue-500/20 ml-2">
+          <User className="w-4 h-4 text-blue-400" />
+        </div>
+      )}
+    </div>
+  );
+};
+
