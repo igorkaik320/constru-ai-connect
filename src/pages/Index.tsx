@@ -13,6 +13,8 @@ interface Message {
   pedidos?: any[];
   table?: { headers: string[]; rows: any[][]; total?: number };
   buttons?: { label: string; action: string; pedido_id?: number }[];
+  pdf_base64?: string;
+  filename?: string;
 }
 
 const Index = () => {
@@ -26,7 +28,7 @@ const Index = () => {
 
   useEffect(scrollToBottom, [messages]);
 
-  // 🔹 Função para enviar mensagem ao backend
+  // 🔹 Envia mensagem ao backend
   const sendMessage = async (text: string) => {
     const userMessage: Message = { role: "user", content: text };
     setMessages((prev) => [...prev, userMessage]);
@@ -39,7 +41,7 @@ const Index = () => {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          user: "igorkaik320@gmail.com", // pode deixar fixo
+          user: "igorkaik320@gmail.com", // email fixo
           text,
         }),
       });
@@ -53,6 +55,8 @@ const Index = () => {
         ...(data.table && { table: data.table }),
         ...(data.pedidos && { pedidos: data.pedidos }),
         ...(data.type && { type: data.type }),
+        ...(data.pdf_base64 && { pdf_base64: data.pdf_base64 }),
+        ...(data.filename && { filename: data.filename }),
       };
 
       setMessages((prev) => [...prev, aiMessage]);
@@ -68,12 +72,12 @@ const Index = () => {
     }
   };
 
-  // 🔹 Função para lidar com ações (botões da IA)
+  // 🔹 Ações (botões da IA)
   const handleAction = (pedidoId: number, acao: string) => {
     sendMessage(`${acao} ${pedidoId}`);
   };
 
-  // 🔹 Função para sugestões iniciais
+  // 🔹 Sugestões iniciais
   const handleSuggestion = (text: string) => {
     sendMessage(text);
   };
@@ -118,12 +122,26 @@ const Index = () => {
               </div>
             ) : (
               messages.map((m, i) => (
-                <ChatMessage
-                  key={i}
-                  message={m}
-                  isLoading={isLoading && i === messages.length - 1}
-                  onAction={handleAction}
-                />
+                <div key={i}>
+                  <ChatMessage
+                    message={m}
+                    isLoading={isLoading && i === messages.length - 1}
+                    onAction={handleAction}
+                  />
+
+                  {/* 🔽 Botão de download do PDF, se existir */}
+                  {m.pdf_base64 && (
+                    <a
+                      href={`data:application/pdf;base64,${m.pdf_base64}`}
+                      download={m.filename || "relatorio.pdf"}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="mt-2 inline-block px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 transition"
+                    >
+                      📄 Baixar PDF
+                    </a>
+                  )}
+                </div>
               ))
             )}
             <div ref={messagesEndRef} />
