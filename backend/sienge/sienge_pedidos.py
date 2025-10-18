@@ -32,7 +32,6 @@ def listar_pedidos_pendentes(data_inicio=None, data_fim=None):
     if r.status_code == 200:
         data = r.json()
         pedidos = data.get("results", [])
-        # 🔹 Garante que só retorne pedidos realmente pendentes
         return [p for p in pedidos if p.get("status") == "PENDING"]
     logging.error(f"Erro ao listar pedidos: {r.text}")
     return []
@@ -44,12 +43,11 @@ def itens_pedido(purchase_order_id):
     if r.status_code != 200:
         logging.error(f"Erro ao buscar pedido {purchase_order_id}: {r.text}")
         return []
-
     data = r.json()
-    # 🔹 Pega itens dentro da estrutura correta
     itens = data.get("items") or data.get("purchaseItems") or data.get("orderItems") or []
-    if not itens:
-        logging.warning(f"Nenhum item encontrado no pedido {purchase_order_id}.")
+    if not isinstance(itens, list):
+        logging.warning(f"Formato inesperado para itens do pedido {purchase_order_id}.")
+        return []
     return itens
 
 def autorizar_pedido(purchase_order_id, observacao=None):
