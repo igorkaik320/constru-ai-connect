@@ -1,35 +1,24 @@
 import { useState, useRef, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
 import { ChatMessage } from "@/components/ChatMessage";
 import { ChatInput } from "@/components/ChatInput";
 import { ChatHeader } from "@/components/ChatHeader";
 import { ConversationsSidebar } from "@/components/ConversationsSidebar";
 import { SidebarProvider } from "@/components/ui/sidebar";
 import { Bot } from "lucide-react";
-import { supabase } from "@/integrations/supabase/client";
-import { sendMessageToBackend } from "@/backendClient";
-import type { User } from "@supabase/supabase-js";
 
 interface Message {
   role: "user" | "assistant";
   content: string;
-}
-
-interface Conversation {
-  id: string;
-  title: string;
-  created_at: string;
-  updated_at: string;
-  user_id: string;
+  type?: "text" | "pedidos" | "itens";
+  pedidos?: any[];
+  table?: { headers: string[]; rows: any[][]; total?: number };
+  buttons?: { label: string; action: string; pedido_id?: number }[];
 }
 
 const Index = () => {
-  const [user, setUser] = useState<User | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState(false);
-  const [currentConversation, setCurrentConversation] = useState<Conversation | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const navigate = useNavigate();
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -37,117 +26,65 @@ const Index = () => {
 
   useEffect(scrollToBottom, [messages]);
 
-  // Verificar autenticação
-  useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (!session) {
-        navigate("/auth");
-      } else {
-        setUser(session.user);
-      }
-    });
-
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
-      if (!session) {
-        navigate("/auth");
-      } else {
-        setUser(session.user);
-      }
-    });
-
-    return () => subscription.unsubscribe();
-  }, [navigate]);
-
-  // Carregar mensagens da conversa atual
-  useEffect(() => {
-    if (!currentConversation) return;
-
-    const loadMessages = async () => {
-      const { data, error } = await supabase
-        .from("messages")
-        .select("*")
-        .eq("conversation_id", currentConversation.id)
-        .order("created_at", { ascending: true });
-
-      if (error) {
-        console.error("Erro ao carregar mensagens:", error);
-        return;
-      }
-
-      setMessages(data.map((m: any) => ({ role: m.role, content: m.content })));
-    };
-
-    loadMessages();
-  }, [currentConversation]);
-
-  const handleSelectConversation = (conversation: Conversation) => {
-    setCurrentConversation(conversation);
-  };
-
-  const handleCreateConversation = (conversation: Conversation) => {
-    setCurrentConversation(conversation);
-    setMessages([]);
-  };
-
+  // 🔹 Função para enviar mensagem ao backend
   const sendMessage = async (text: string) => {
-    if (!currentConversation || !user) return;
-
     const userMessage: Message = { role: "user", content: text };
     setMessages((prev) => [...prev, userMessage]);
     setIsLoading(true);
 
     try {
-      // Salvar mensagem do usuário no banco
-      await supabase.from("messages").insert({
-        conversation_id: currentConversation.id,
-        role: "user",
-        content: text,
+      const response = await fetch("https://constru-ai-connect.onrender.com/mensagem", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          user: "igorkaik320@gmail.com", // pode deixar fixo
+          text,
+        }),
       });
 
-      // Chamar backend FastAPI
-      const aiResponse = await sendMessageToBackend(user.email || user.id, text);
+      const data = await response.json();
 
       const aiMessage: Message = {
         role: "assistant",
-        content: aiResponse,
+        content: data.text || "Sem resposta da IA.",
+        ...(data.buttons && { buttons: data.buttons }),
+        ...(data.table && { table: data.table }),
+        ...(data.pedidos && { pedidos: data.pedidos }),
+        ...(data.type && { type: data.type }),
       };
+
       setMessages((prev) => [...prev, aiMessage]);
-
-      // Salvar resposta da IA no banco
-      await supabase.from("messages").insert({
-        conversation_id: currentConversation.id,
-        role: "assistant",
-        content: aiResponse,
-      });
-
-      // Atualizar título da conversa se for "Nova Conversa"
-      if (currentConversation.title === "Nova Conversa") {
-        const newTitle = text.slice(0, 30) + (text.length > 30 ? "..." : "");
-        await supabase
-          .from("conversations")
-          .update({ title: newTitle })
-          .eq("id", currentConversation.id);
-        setCurrentConversation({ ...currentConversation, title: newTitle });
-      }
     } catch (error) {
       console.error("Erro ao enviar mensagem:", error);
-      const errorMessage: Message = {
+      const errorMsg: Message = {
         role: "assistant",
-        content: "Erro ao se comunicar com a IA. Tente novamente.",
+        content: "⚠️ Erro ao conectar com o servidor.",
       };
-      setMessages((prev) => [...prev, errorMessage]);
+      setMessages((prev) => [...prev, errorMsg]);
     } finally {
       setIsLoading(false);
     }
+  };
+
+  // 🔹 Função para lidar com ações (botões da IA)
+  const handleAction = (pedidoId: number, acao: string) => {
+    sendMessage(`${acao} ${pedidoId}`);
+  };
+
+  // 🔹 Função para sugestões iniciais
+  const handleSuggestion = (text: string) => {
+    sendMessage(text);
   };
 
   return (
     <SidebarProvider>
       <div className="flex min-h-screen w-full bg-[hsl(var(--background))]">
         <ConversationsSidebar
-          currentConversationId={currentConversation?.id || ""}
-          onSelectConversation={handleSelectConversation}
-          onCreateConversation={handleCreateConversation}
+          currentConversationId={"demo"}
+          onSelectConversation={() => {}}
+          onCreateConversation={() => {}}
         />
 
         <div className="flex flex-col flex-1 h-screen">
@@ -157,30 +94,38 @@ const Index = () => {
 
           <main className="flex-1 overflow-y-auto p-6 space-y-4">
             {messages.length === 0 ? (
-              <div className="h-full flex items-center justify-center text-center">
-                <div className="flex flex-col items-center gap-4 text-muted-foreground">
-                  <Bot className="w-10 h-10 text-primary" />
-                  <h2 className="text-lg font-semibold text-foreground">
-                    Bem-vindo ao constru.ia 👋
-                  </h2>
-                  <p className="text-sm max-w-sm">
-                    Envie uma mensagem para começar. Use termos como{" "}
-                    <span className="text-primary font-medium">
-                      "pedidos pendentes"
-                    </span>{" "}
-                    ou{" "}
-                    <span className="text-primary font-medium">
-                      "itens do pedido 123"
-                    </span>.
-                  </p>
+              <div className="h-full flex flex-col items-center justify-center text-center gap-5">
+                <Bot className="w-10 h-10 text-primary" />
+                <h2 className="text-lg font-semibold text-foreground">
+                  Bem-vindo ao constru.ia 👋
+                </h2>
+                <p className="text-sm max-w-sm text-muted-foreground">
+                  Envie uma mensagem para começar ou use um dos atalhos abaixo:
+                </p>
+                <div className="flex flex-wrap justify-center gap-2">
+                  {["pedidos pendentes", "itens do pedido 123", "autorizar pedido 101"].map(
+                    (sugestao, i) => (
+                      <button
+                        key={i}
+                        onClick={() => handleSuggestion(sugestao)}
+                        className="px-3 py-1.5 text-sm rounded-lg bg-gradient-to-r from-purple-500 to-blue-500 text-white hover:opacity-90 transition"
+                      >
+                        {sugestao}
+                      </button>
+                    )
+                  )}
                 </div>
               </div>
             ) : (
               messages.map((m, i) => (
-                <ChatMessage key={i} message={m} isLoading={isLoading && i === messages.length - 1} />
+                <ChatMessage
+                  key={i}
+                  message={m}
+                  isLoading={isLoading && i === messages.length - 1}
+                  onAction={handleAction}
+                />
               ))
             )}
-
             <div ref={messagesEndRef} />
           </main>
 
