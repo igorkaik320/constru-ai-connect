@@ -10,7 +10,6 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
-  SidebarTrigger,
   useSidebar,
 } from "@/components/ui/sidebar";
 import { Button } from "@/components/ui/button";
@@ -56,8 +55,6 @@ export function ConversationsSidebar({
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [selectedConv, setSelectedConv] = useState<Conversation | null>(null);
   const [newTitle, setNewTitle] = useState("");
-  const { state } = useSidebar();
-  const collapsed = state === "collapsed";
   const { toast } = useToast();
 
   useEffect(() => {
@@ -104,62 +101,6 @@ export function ConversationsSidebar({
     setNewTitle("");
   };
 
-  const handleDuplicate = async (conv: Conversation) => {
-    // Buscar mensagens da conversa
-    const { data: messages, error: messagesError } = await supabase
-      .from("messages")
-      .select("*")
-      .eq("conversation_id", conv.id)
-      .order("created_at", { ascending: true });
-
-    if (messagesError) {
-      toast({
-        title: "Erro",
-        description: "Falha ao duplicar conversa.",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    // Criar nova conversa
-    const { data: newConv, error: convError } = await supabase
-      .from("conversations")
-      .insert({
-        title: `${conv.title} (cópia)`,
-        user_id: (await supabase.auth.getUser()).data.user?.id,
-      })
-      .select()
-      .single();
-
-    if (convError || !newConv) {
-      toast({
-        title: "Erro",
-        description: "Falha ao criar conversa duplicada.",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    // Copiar mensagens
-    if (messages && messages.length > 0) {
-      const newMessages = messages.map((msg) => ({
-        conversation_id: newConv.id,
-        role: msg.role,
-        content: msg.content,
-      }));
-
-      await supabase.from("messages").insert(newMessages);
-    }
-
-    await loadConversations();
-    onSelectConversation(newConv.id);
-
-    toast({
-      title: "Conversa duplicada",
-      description: "A conversa foi duplicada com sucesso.",
-    });
-  };
-
   const handleDelete = async () => {
     if (!selectedConv) return;
 
@@ -179,16 +120,6 @@ export function ConversationsSidebar({
 
     await loadConversations();
     setDeleteDialogOpen(false);
-
-    // Se a conversa excluída era a atual, selecionar a primeira
-    if (currentConversationId === selectedConv.id) {
-      const remaining = conversations.filter((c) => c.id !== selectedConv.id);
-      if (remaining.length > 0) {
-        onSelectConversation(remaining[0].id);
-      } else {
-        onCreateConversation();
-      }
-    }
   };
 
   const handleLogout = async () => {
@@ -197,91 +128,85 @@ export function ConversationsSidebar({
 
   return (
     <>
-      <Sidebar className={collapsed ? "w-14" : "w-64"} collapsible="icon">
+      <Sidebar className="w-64 bg-[#0e0e10] text-gray-100 border-r border-gray-800">
         <SidebarContent>
           <SidebarGroup>
-            <div className="flex items-center justify-between px-2 py-2">
-              {!collapsed && (
-                <SidebarGroupLabel>Conversas</SidebarGroupLabel>
-              )}
+            <div className="flex items-center justify-between px-3 py-3 border-b border-gray-800">
+              <SidebarGroupLabel className="text-sm font-semibold text-gray-300 tracking-wide">
+                Conversas
+              </SidebarGroupLabel>
               <Button
                 size="sm"
                 variant="ghost"
                 onClick={onCreateConversation}
-                className="h-8 w-8 p-0"
+                className="h-8 w-8 p-0 hover:bg-purple-700/30 text-purple-400"
               >
                 <Plus className="h-4 w-4" />
               </Button>
             </div>
 
             <SidebarGroupContent>
-              <SidebarMenu>
+              <SidebarMenu className="mt-2 space-y-1">
                 {conversations.map((conv) => (
                   <SidebarMenuItem key={conv.id}>
-                    <div className="flex items-center gap-1">
-                      <SidebarMenuButton
-                        onClick={() => onSelectConversation(conv.id)}
-                        isActive={currentConversationId === conv.id}
-                        className="flex-1"
-                      >
-                        {!collapsed && (
-                          <span className="truncate">{conv.title}</span>
-                        )}
-                      </SidebarMenuButton>
-                      {!collapsed && (
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              className="h-8 w-8 p-0"
-                            >
-                              <MoreVertical className="h-4 w-4" />
-                            </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end">
-                            <DropdownMenuItem
-                              onClick={() => {
-                                setSelectedConv(conv);
-                                setNewTitle(conv.title);
-                                setRenameDialogOpen(true);
-                              }}
-                            >
-                              Renomear
-                            </DropdownMenuItem>
-                            <DropdownMenuItem
-                              onClick={() => handleDuplicate(conv)}
-                            >
-                              Duplicar
-                            </DropdownMenuItem>
-                            <DropdownMenuItem
-                              onClick={() => {
-                                setSelectedConv(conv);
-                                setDeleteDialogOpen(true);
-                              }}
-                              className="text-red-600"
-                            >
-                              Excluir
-                            </DropdownMenuItem>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
+                    <SidebarMenuButton
+                      onClick={() => onSelectConversation(conv.id)}
+                      isActive={currentConversationId === conv.id}
+                      className={cn(
+                        "flex w-full text-sm rounded-lg px-3 py-2 transition-all",
+                        currentConversationId === conv.id
+                          ? "bg-gradient-to-r from-purple-600 to-blue-600 text-white shadow-md"
+                          : "hover:bg-[#1a1a1d] text-gray-300"
                       )}
-                    </div>
+                    >
+                      <span className="truncate">{conv.title}</span>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="ml-auto h-8 w-8 p-0 text-gray-400 hover:text-white"
+                          >
+                            <MoreVertical className="h-4 w-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" className="bg-[#1a1a1d] border-gray-700 text-gray-200">
+                          <DropdownMenuItem
+                            onClick={() => {
+                              setSelectedConv(conv);
+                              setNewTitle(conv.title);
+                              setRenameDialogOpen(true);
+                            }}
+                          >
+                            Renomear
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            onClick={() => {
+                              setSelectedConv(conv);
+                              setDeleteDialogOpen(true);
+                            }}
+                            className="text-red-400 hover:text-red-300"
+                          >
+                            Excluir
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </SidebarMenuButton>
                   </SidebarMenuItem>
                 ))}
               </SidebarMenu>
             </SidebarGroupContent>
           </SidebarGroup>
 
-          <div className="mt-auto p-2">
+          <div className="mt-auto p-3 border-t border-gray-800">
             <Button
               variant="ghost"
               size="sm"
               onClick={handleLogout}
-              className="w-full justify-start"
+              className="w-full justify-start text-gray-400 hover:text-white hover:bg-[#1a1a1d]"
             >
               <LogOut className="h-4 w-4 mr-2" />
-              {!collapsed && "Sair"}
+              Sair
             </Button>
           </div>
         </SidebarContent>
@@ -289,21 +214,25 @@ export function ConversationsSidebar({
 
       {/* Rename Dialog */}
       <AlertDialog open={renameDialogOpen} onOpenChange={setRenameDialogOpen}>
-        <AlertDialogContent>
+        <AlertDialogContent className="bg-[#1a1a1d] text-gray-100 border-gray-700">
           <AlertDialogHeader>
             <AlertDialogTitle>Renomear conversa</AlertDialogTitle>
-            <AlertDialogDescription>
-              Digite o novo nome para a conversa
+            <AlertDialogDescription className="text-gray-400">
+              Digite o novo nome para esta conversa.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <Input
             value={newTitle}
             onChange={(e) => setNewTitle(e.target.value)}
             placeholder="Nome da conversa"
+            className="bg-[#0e0e10] border-gray-700 text-gray-100 placeholder-gray-500"
           />
           <AlertDialogFooter>
             <AlertDialogCancel>Cancelar</AlertDialogCancel>
-            <AlertDialogAction onClick={handleRename}>
+            <AlertDialogAction
+              onClick={handleRename}
+              className="bg-gradient-to-r from-purple-600 to-blue-600 text-white hover:opacity-90"
+            >
               Renomear
             </AlertDialogAction>
           </AlertDialogFooter>
@@ -312,19 +241,18 @@ export function ConversationsSidebar({
 
       {/* Delete Dialog */}
       <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
-        <AlertDialogContent>
+        <AlertDialogContent className="bg-[#1a1a1d] text-gray-100 border-gray-700">
           <AlertDialogHeader>
             <AlertDialogTitle>Excluir conversa</AlertDialogTitle>
-            <AlertDialogDescription>
-              Tem certeza que deseja excluir esta conversa? Esta ação não pode
-              ser desfeita.
+            <AlertDialogDescription className="text-gray-400">
+              Tem certeza que deseja excluir esta conversa? Esta ação não pode ser desfeita.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancelar</AlertDialogCancel>
             <AlertDialogAction
               onClick={handleDelete}
-              className="bg-red-600 hover:bg-red-700"
+              className="bg-red-600 hover:bg-red-700 text-white"
             >
               Excluir
             </AlertDialogAction>
