@@ -1,14 +1,13 @@
 import requests
-from base64 import b64encode
 import logging
+from base64 import b64encode
 
-# === CONFIGURAÇÕES ===
+# Configuração
 subdominio = "cctcontrol"
 usuario = "cctcontrol-api"
 senha = "9SQ2MaNrFOeZOOuOAqeSRy7bYWYDDf85"
 
 BASE_URL = f"https://api.sienge.com.br/{subdominio}/public/api/v1"
-
 token = b64encode(f"{usuario}:{senha}".encode()).decode()
 headers = {
     "Authorization": f"Basic {token}",
@@ -18,69 +17,53 @@ headers = {
 
 logging.basicConfig(level=logging.INFO)
 
-# === FUNÇÕES ===
+# === Funções ===
 
-def listar_pedidos_pendentes(data_inicio=None, data_fim=None):
+def listar_pedidos_pendentes():
     url = f"{BASE_URL}/purchase-orders?status=PENDING"
-    if data_inicio:
-        url += f"&startDate={data_inicio}"
-    if data_fim:
-        url += f"&endDate={data_fim}"
-
     r = requests.get(url, headers=headers)
     logging.info(f"listar_pedidos_pendentes: {url} -> {r.status_code}")
     if r.status_code == 200:
         data = r.json()
         pedidos = data.get("results", [])
-        pendentes = [
-            p for p in pedidos
-            if p.get("status") == "PENDING" and p.get("canBeAuthorized", False)
-        ]
-        return pendentes
-    logging.error(f"Erro ao listar pedidos: {r.text}")
+        # Apenas pedidos realmente pendentes de autorização
+        return [p for p in pedidos if p.get("status") == "PENDING" and not p.get("authorized", False)]
     return []
 
-def itens_pedido(purchase_order_id):
-    url = f"{BASE_URL}/purchase-orders/{purchase_order_id}"
-    r = requests.get(url, headers=headers)
-    logging.info(f"itens_pedido: {url} -> {r.status_code}")
-    if r.status_code != 200:
-        logging.error(f"Erro ao buscar pedido {purchase_order_id}: {r.text}")
-        return []
-    data = r.json()
-    for key in ["items", "purchaseItems", "orderItems", "purchaseOrderItems"]:
-        if key in data and isinstance(data[key], list):
-            return data[key]
-    logging.warning(f"Nenhum item encontrado no pedido {purchase_order_id}.")
-    return []
-
-def autorizar_pedido(purchase_order_id, observacao=None):
-    url = f"{BASE_URL}/purchase-orders/{purchase_order_id}/authorize"
-    body = {"observation": observacao} if observacao else {}
-    r = requests.put(url, headers=headers, json=body)
-    logging.info(f"autorizar_pedido: {url} -> {r.status_code} | body={body}")
-    return r.status_code in [200, 204]
-
-def reprovar_pedido(purchase_order_id, observacao=None):
-    url = f"{BASE_URL}/purchase-orders/{purchase_order_id}/disapprove"
-    body = {"observation": observacao} if observacao else {}
-    r = requests.put(url, headers=headers, json=body)
-    logging.info(f"reprovar_pedido: {url} -> {r.status_code} | body={body}")
-    return r.status_code in [200, 204]
-
-def gerar_relatorio_pdf_bytes(purchase_order_id):
-    url = f"{BASE_URL}/purchase-orders/{purchase_order_id}/analysis/pdf"
-    r = requests.get(url, headers=headers)
-    logging.info(f"gerar_relatorio_pdf_bytes: {url} -> {r.status_code}")
-    if r.status_code == 200 and r.content:
-        return r.content
-    logging.warning(f"Falha ao gerar PDF: status={r.status_code}")
-    return None
-
-def buscar_pedido_por_id(purchase_order_id):
-    url = f"{BASE_URL}/purchase-orders/{purchase_order_id}"
+def buscar_pedido_por_id(pid):
+    url = f"{BASE_URL}/purchase-orders/{pid}"
     r = requests.get(url, headers=headers)
     logging.info(f"buscar_pedido_por_id: {url} -> {r.status_code}")
     if r.status_code == 200:
         return r.json()
+    return None
+
+def itens_pedido(pid):
+    url = f"{BASE_URL}/purchase-orders/{pid}/items"
+    r = requests.get(url, headers=headers)
+    logging.info(f"itens_pedido: {url} -> {r.status_code}")
+    if r.status_code == 200:
+        return r.json().get("results", [])
+    return []
+
+def autorizar_pedido(pid, obs=None):
+    url = f"{BASE_URL}/purchase-orders/{pid}/authorize"
+    body = {"observation": obs} if obs else {}
+    r = requests.put(url, headers=headers, json=body)
+    logging.info(f"autorizar_pedido: {url} -> {r.status_code}")
+    return r.status_code in [200, 204]
+
+def reprovar_pedido(pid, obs=None):
+    url = f"{BASE_URL}/purchase-orders/{pid}/disapprove"
+    body = {"observation": obs} if obs else {}
+    r = requests.put(url, headers=headers, json=body)
+    logging.info(f"reprovar_pedido: {url} -> {r.status_code}")
+    return r.status_code in [200, 204]
+
+def gerar_relatorio_pdf_bytes(pid):
+    url = f"{BASE_URL}/purchase-orders/{pid}/analysis/pdf"
+    r = requests.get(url, headers=headers)
+    logging.info(f"gerar_relatorio_pdf_bytes: {url} -> {r.status_code}")
+    if r.status_code == 200:
+        return r.content
     return None
