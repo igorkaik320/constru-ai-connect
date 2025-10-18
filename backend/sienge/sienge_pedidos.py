@@ -1,137 +1,164 @@
 import requests
-import logging
 from base64 import b64encode
-from io import BytesIO
-from reportlab.lib.pagesizes import A4
-from reportlab.lib.units import cm
-from reportlab.pdfgen import canvas
+import logging
+from typing import List, Dict, Any, Optional
 
-# Configurações de autenticação da API Sienge
+# === CONFIGURAÇÕES ===
 subdominio = "cctcontrol"
 usuario = "cctcontrol-api"
-senha = "9SQ2NaMNFoEoZOuOAqeSRy7bYWYDf85"
+senha = "9SQ2MaNrFOeZOOuOAqeSRy7bYWYDDf85"  # sua senha atual
 
 BASE_URL = f"https://api.sienge.com.br/{subdominio}/public/api/v1"
-token = b64encode(f"{usuario}:{senha}".encode()).decode()
-headers = {
-    "Authorization": f"Basic {token}",
+
+# Auth básico
+_token = b64encode(f"{usuario}:{senha}".encode()).decode()
+
+# Cabeçalhos padrão JSON
+json_headers = {
+    "Authorization": f"Basic {_token}",
     "accept": "application/json",
     "Content-Type": "application/json",
+}
+
+# Cabeçalho para PDF (IMPORTANTE p/ evitar 406)
+pdf_headers = {
+    "Authorization": f"Basic {_token}",
+    "accept": "application/pdf",   # <- isso corrige o 406
+    # NADA de Content-Type aqui
 }
 
 logging.basicConfig(level=logging.INFO)
 
 
-# === FUNÇÕES BÁSICAS ===
-def listar_pedidos_pendentes():
-    url = f"{BASE_URL}/purchase-orders?status=PENDING&authorized=false"
-    logging.info(f"listar_pedidos_pendentes: {url}")
-    r = requests.get(url, headers=headers)
-    return r.json().get("results", []) if r.status_code == 200 else []
+def _get(url: str, headers: Dict[str, str]) -> requests.Response:
+    r = requests.get(url, headers=headers, timeout=30)
+    logging.info("%s -> %s", url, r.status_code)
+    return r
 
 
-def buscar_pedido_por_id(pedido_id):
-    url = f"{BASE_URL}/purchase-orders/{pedido_id}"
-    logging.info(f"buscar_pedido_por_id: {url}")
-    r = requests.get(url, headers=headers)
-    return r.json() if r.status_code == 200 else None
+def _put(url: str, headers: Dict[str, str], body: Optional[dict] = None) -> requests.Response:
+    r = requests.put(url, headers=headers, json=body or {}, timeout=30)
+    logging.info("%s -> %s | body=%s", url, r.status_code, body)
+    return r
 
 
-def itens_pedido(pedido_id):
-    url = f"{BASE_URL}/purchase-orders/{pedido_id}/items"
-    logging.info(f"itens_pedido: {url}")
-    r = requests.get(url, headers=headers)
-    return r.json().get("results", []) if r.status_code == 200 else []
+# =========================
+#  FUNÇÕES DE CONSULTA
+# =========================
+
+def listar_pedidos_pendentes(data_inicio: Optional[str] = None, data_fim: Optional[str] = None) -> List[Dict[str, Any]]:
+    """
+    Retorna somente pedidos realmente pendentes de autorização:
+    - status = PENDING
+    - authorized = false
+    - disapproved = false  (evita mostrar reprovados)
+    - consistency = CONSISTENT
+    """
+    url = f"{BASE_URL}/purchase-orders?status=PENDING&authorized=false&consistency=CONSISTENT"
+    if data_inicio:
+        url += f"&startDate={data_inicio}"
+    if data_fim:
+        url += f"&endDate={data_fim}"
+
+    r = _get(url, json_headers)
+    if r.status_code != 200:
+        logging.warning("Falha ao listar pedidos: %s", r.text)
+        return []
+
+    data = r.json() or {}
+    results = data.get("results", []) or []
+    # Filtra fora reprovados (alguns PENDING aparecem com disapproved=true)
+    results = [p for p in results if not p.get("disapproved", False)]
+
+    # Ordena por data desc (se existir)
+    try:
+        results.sort(key=lambda p: p.get("date") or "", reverse=True)
+    except Exception:
+        pass
+
+    logging.info("🧾 %s pedidos pendentes encontrados.", len(results))
+    return results
 
 
-def buscar_centro_custo(cc_id):
-    url = f"{BASE_URL}/cost-centers/{cc_id}"
-    logging.info(f"buscar_centro_custo: {url}")
-    r = requests.get(url, headers=headers)
-    return r.json().get("description") if r.status_code == 200 else "Não informado"
-
-
-def buscar_obra(obra_id):
-    url = f"{BASE_URL}/buildings/{obra_id}"
-    logging.info(f"buscar_obra: {url}")
-    r = requests.get(url, headers=headers)
-    return r.json().get("name") if r.status_code == 200 else "Não informado"
-
-
-def buscar_fornecedor(fornecedor_id):
-    url = f"{BASE_URL}/suppliers/{fornecedor_id}"
-    logging.info(f"buscar_fornecedor: {url}")
-    r = requests.get(url, headers=headers)
+def buscar_pedido_por_id(purchase_order_id: int) -> Optional[Dict[str, Any]]:
+    url = f"{BASE_URL}/purchase-orders/{purchase_order_id}"
+    r = _get(url, json_headers)
     if r.status_code == 200:
-        data = r.json()
-        nome = data.get("name", "Não informado")
-        cnpj = data.get("cnpj", "-")
-        return f"{nome} (CNPJ {cnpj})"
-    return "Não informado"
+        return r.json()
+    return None
 
 
-def buscar_totalizacao(pedido_id):
-    url = f"{BASE_URL}/purchase-orders/{pedido_id}/totalization"
-    logging.info(f"buscar_totalizacao: {url}")
-    r = requests.get(url, headers=headers)
-    return r.json() if r.status_code == 200 else None
+def itens_pedido(purchase_order_id: int) -> List[Dict[str, Any]]:
+    url = f"{BASE_URL}/purchase-orders/{purchase_order_id}/items"
+    r = _get(url, json_headers)
+    if r.status_code == 200:
+        return (r.json() or {}).get("results", []) or []
+    return []
 
 
-def autorizar_pedido(pedido_id):
-    url = f"{BASE_URL}/purchase-orders/{pedido_id}/authorize"
-    logging.info(f"autorizar_pedido: {url}")
-    r = requests.put(url, headers=headers)
-    return r.status_code
+def autorizar_pedido(purchase_order_id: int, observacao: Optional[str] = None) -> bool:
+    url = f"{BASE_URL}/purchase-orders/{purchase_order_id}/authorize"
+    if observacao:
+        # PATCH com corpo (quando há observação)
+        r = requests.patch(url, headers=json_headers, json={"observation": observacao}, timeout=30)
+        logging.info("%s -> %s | body=%s", url, r.status_code, {"observation": observacao})
+        return r.status_code in (200, 204)
+    # PUT sem corpo
+    r = _put(url, json_headers)
+    return r.status_code in (200, 204)
 
 
-def reprovar_pedido(pedido_id):
-    url = f"{BASE_URL}/purchase-orders/{pedido_id}/disapprove"
-    logging.info(f"reprovar_pedido: {url}")
-    r = requests.put(url, headers=headers)
-    return r.status_code
+def reprovar_pedido(purchase_order_id: int, observacao: Optional[str] = None) -> bool:
+    url = f"{BASE_URL}/purchase-orders/{purchase_order_id}/disapprove"
+    if observacao:
+        r = requests.patch(url, headers=json_headers, json={"observation": observacao}, timeout=30)
+        logging.info("%s -> %s | body=%s", url, r.status_code, {"observation": observacao})
+        return r.status_code in (200, 204)
+    r = _put(url, json_headers)
+    return r.status_code in (200, 204)
 
 
-# === GERAÇÃO DE PDF (em Base64) ===
-def gerar_pdf_pedido_base64(pedido, itens, totalizacao):
-    buffer = BytesIO()
-    pdf = canvas.Canvas(buffer, pagesize=A4)
-    pdf.setFont("Helvetica", 11)
-    largura, altura = A4
-    y = altura - 2 * cm
+def gerar_relatorio_pdf_bytes(purchase_order_id: int) -> Optional[bytes]:
+    """
+    PDF OFICIAL do Sienge:
+    GET /purchase-orders/{id}/analysis/pdf
+    Necessita Accept: application/pdf (senão 406).
+    """
+    url = f"{BASE_URL}/purchase-orders/{purchase_order_id}/analysis/pdf"
+    r = _get(url, pdf_headers)
+    if r.status_code == 200 and r.content:
+        return r.content
+    logging.warning("Falha ao gerar PDF: status=%s, body=%s", r.status_code, getattr(r, "text", ""))
+    return None
 
-    pdf.drawString(2 * cm, y, f"Resumo do Pedido {pedido.get('id')}")
-    y -= 0.8 * cm
-    pdf.drawString(2 * cm, y, f"Data: {pedido.get('date', '-')}")
-    y -= 0.5 * cm
-    pdf.drawString(2 * cm, y, f"Comprador: {pedido.get('buyerId', '-')}")
-    y -= 0.5 * cm
-    pdf.drawString(2 * cm, y, f"Obra: {pedido.get('buildingId', '-')}")
-    y -= 0.5 * cm
-    pdf.drawString(2 * cm, y, f"Centro de Custo: {pedido.get('costCenterId', '-')}")
-    y -= 0.5 * cm
-    pdf.drawString(2 * cm, y, f"Fornecedor ID: {pedido.get('supplierId', '-')}")
-    y -= 0.5 * cm
-    pdf.drawString(2 * cm, y, f"Condição de Pagamento: {pedido.get('paymentCondition', '-')}")
-    y -= 1 * cm
 
-    pdf.drawString(2 * cm, y, "Itens do Pedido:")
-    y -= 0.5 * cm
-    for item in itens:
-        descricao = item.get("resourceDescription", "Item")
-        qtd = item.get("quantity", 0)
-        preco = item.get("unitPrice", 0)
-        pdf.drawString(2 * cm, y, f"- {descricao} ({qtd} un) - R$ {preco:,.2f}")
-        y -= 0.4 * cm
-        if y < 3 * cm:
-            pdf.showPage()
-            y = altura - 2 * cm
+# === Extras (opcionais/robustos) ===
 
-    total = totalizacao.get("itemsTotalAmount", pedido.get("totalAmount", 0)) if totalizacao else pedido.get("totalAmount", 0)
-    pdf.setFont("Helvetica-Bold", 12)
-    pdf.drawString(2 * cm, y - 1 * cm, f"Valor Total: R$ {total:,.2f}")
+def buscar_fornecedor(supplier_id: Optional[int]) -> Optional[Dict[str, Any]]:
+    if not supplier_id:
+        return None
+    url = f"{BASE_URL}/suppliers/{supplier_id}"
+    r = _get(url, json_headers)
+    if r.status_code == 200:
+        return r.json()
+    return None
 
-    pdf.save()
-    pdf_bytes = buffer.getvalue()
-    buffer.close()
 
-    return b64encode(pdf_bytes).decode()
+def buscar_centro_custo(cost_center_id: Optional[int]) -> Optional[Dict[str, Any]]:
+    if not cost_center_id:
+        return None
+    url = f"{BASE_URL}/cost-centers/{cost_center_id}"
+    r = _get(url, json_headers)
+    if r.status_code == 200:
+        return r.json()
+    return None
+
+
+def buscar_obra(building_id: Optional[int]) -> Optional[Dict[str, Any]]:
+    if not building_id:
+        return None
+    url = f"{BASE_URL}/buildings/{building_id}"
+    r = _get(url, json_headers)
+    if r.status_code == 200:
+        return r.json()
+    return None
