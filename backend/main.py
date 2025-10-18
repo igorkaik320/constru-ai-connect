@@ -5,9 +5,8 @@ import os
 import json
 import logging
 import base64
-import openai
 
-from sienge.sienge_pedidos import (
+from sienge_pedidos import (
     listar_pedidos_pendentes,
     buscar_pedido_por_id,
     itens_pedido,
@@ -17,9 +16,10 @@ from sienge.sienge_pedidos import (
 )
 
 logging.basicConfig(level=logging.INFO)
+
 app = FastAPI()
 
-# === CORS ===
+# --- CORS ---
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -28,76 +28,70 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# === MODELO ===
+# --- Modelo de mensagem ---
 class Message(BaseModel):
     user: str
     text: str
 
+# --- Memória de contexto (simples por usuário) ---
+user_context = {}
 
-# === SAFE GET ===
-def safe_get(dado, *chaves, default="Não informado"):
-    """Evita erro de atributo quando o campo for string em vez de dict."""
-    valor = dado
-    for chave in chaves:
-        if isinstance(valor, dict):
-            valor = valor.get(chave)
-        else:
-            return valor if valor else default
-    return valor if valor else default
+# --- Função auxiliar para formatação de valores ---
+def fmt(valor):
+    return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
-
-# === INTERPRETAÇÃO IA ===
-def entender_intencao(texto: str):
-    openai.api_key = os.getenv("OPENAI_API_KEY")
-    prompt = f"""
-Você é uma assistente chamada *Constru.IA*, educada e especialista no sistema Sienge.
-Analise a mensagem do usuário e diga o que ele quer fazer.
-
-Responda em JSON no formato:
-{{
-  "acao": "listar_pedidos_pendentes" | "itens_pedido" | "autorizar_pedido" | "reprovar_pedido" | "relatorio_pdf",
-  "parametros": {{ "pedido_id": <número opcional> }}
-}}
-
-Mensagem: "{texto}"
-"""
-    try:
-        response = openai.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.2
-        )
-        conteudo = response.choices[0].message.content
-        conteudo = conteudo.replace("```json", "").replace("```", "").strip()
-        return json.loads(conteudo)
-    except Exception as e:
-        logging.error(f"Erro IA: {e}")
-        return {"acao": None, "erro": str(e)}
-
-
-# === FORMATAÇÃO DE ITENS ===
+# --- Função: formatar tabela de itens ---
 def formatar_itens_tabela(itens):
     if not itens:
         return None
-    headers = ["Código", "Descrição", "Qtd", "Unid", "Vlr Unit", "Total"]
+
+    headers = ["Nº", "Descrição", "Qtd", "Unid", "Valor Unit.", "Total"]
     rows = []
-    total = 0
-    for item in itens:
-        cod = item.get("resourceCode") or "-"
-        desc = item.get("resourceDescription") or item.get("description", "")
+    total_geral = 0
+
+    for i, item in enumerate(itens, 1):
+        desc = item.get("resourceDescription") or "Sem descrição"
         qtd = item.get("quantity", 0)
-        unid = item.get("unit", "")
-        valor_unit = item.get("unitPrice", 0)
-        subtotal = round(qtd * valor_unit, 2)
-        total += subtotal
-        rows.append([cod, desc, qtd, unid, valor_unit, subtotal])
-    return {"headers": headers, "rows": rows, "total": total}
+        unid = item.get("unitOfMeasure") or "-"
+        valor_unit = item.get("unitPrice") or 0.0
+        total = qtd * valor_unit
+        total_geral += total
 
+        rows.append([
+            i,
+            desc,
+            round(qtd, 2),
+            unid,
+            fmt(valor_unit),
+            fmt(total)
+        ])
 
-# === ENDPOINT ===
+    return {"headers": headers, "rows": rows, "total": fmt(total_geral)}
+
+# --- Interpretação simples ---
+def entender_intencao(texto: str):
+    texto = texto.lower().strip()
+    if "pedido" in texto and ("item" in texto or "itens" in texto):
+        pid = "".join(filter(str.isdigit, texto))
+        return {"acao": "itens_pedido", "parametros": {"pedido_id": pid if pid else None}}
+    if "autorizar" in texto:
+        pid = "".join(filter(str.isdigit, texto))
+        return {"acao": "autorizar_pedido", "parametros": {"pedido_id": pid if pid else None}}
+    if "reprovar" in texto:
+        pid = "".join(filter(str.isdigit, texto))
+        return {"acao": "reprovar_pedido", "parametros": {"pedido_id": pid if pid else None}}
+    if "pdf" in texto:
+        pid = "".join(filter(str.isdigit, texto))
+        return {"acao": "relatorio_pdf", "parametros": {"pedido_id": pid if pid else None}}
+    if "pendente" in texto or "listar" in texto:
+        return {"acao": "listar_pedidos_pendentes", "parametros": {}}
+    return {"acao": None, "parametros": {}}
+
+# --- Endpoint principal ---
 @app.post("/mensagem")
 async def mensagem(msg: Message):
     logging.info(f"📩 Mensagem recebida: {msg.user} -> {msg.text}")
+
     intencao = entender_intencao(msg.text)
     acao = intencao.get("acao")
     params = intencao.get("parametros", {})
@@ -109,10 +103,10 @@ async def mensagem(msg: Message):
     ]
 
     if not acao:
-        return {"text": "Olá 👋! Sou a Constru.IA. Em que posso ajudar hoje?", "buttons": menu}
+        return {"text": "Escolha uma opção:", "buttons": menu}
 
     try:
-        # === LISTAR PEDIDOS ===
+        # --- Listar pedidos pendentes ---
         if acao == "listar_pedidos_pendentes":
             pedidos = listar_pedidos_pendentes()
             if not pedidos:
@@ -121,81 +115,82 @@ async def mensagem(msg: Message):
             texto = "📋 *Pedidos pendentes de autorização:*\n\n"
             botoes = []
             for p in pedidos:
-                fornecedor = p.get("supplierName", "Fornecedor não informado")
-                valor = p.get("totalAmount", 0)
-                texto += f"• Pedido {p['id']} — {fornecedor} — R$ {valor:,.2f}\n"
-                botoes.append({
-                    "label": f"Pedido {p['id']}",
-                    "action": "itens_pedido",
-                    "pedido_id": p["id"]
-                })
-            return {"text": texto.strip(), "buttons": botoes}
+                texto += f"• Pedido {p['id']} — Fornecedor: {p.get('supplierName', 'não informado')} — {fmt(p.get('totalAmount', 0))}\n"
+                botoes.append({"label": f"Pedido {p['id']}", "action": "itens_pedido", "pedido_id": p["id"]})
 
-        # === ITENS DO PEDIDO ===
+            return {"text": texto.strip(), "buttons": botoes or menu}
+
+        # --- Itens do pedido ---
         elif acao == "itens_pedido":
-            pid = params.get("pedido_id")
+            pid = params.get("pedido_id") or user_context.get(msg.user)
             if not pid:
                 return {"text": "Por favor, informe o número do pedido.", "buttons": menu}
+            pid = int(pid)
+            user_context[msg.user] = pid
 
             pedido = buscar_pedido_por_id(pid)
             itens = itens_pedido(pid)
+            tabela = formatar_itens_tabela(itens)
 
-            if not pedido:
-                return {"text": f"❌ Pedido {pid} não encontrado.", "buttons": menu}
-            if not itens:
-                return {"text": f"❌ Nenhum item encontrado no pedido {pid}.", "buttons": menu}
-
-            resumo = f"""
-📄 *Resumo do Pedido {pid}:*
-
-🏢 Empresa: {safe_get(pedido, 'enterprise', 'name')}
-🏗️ Obra: {safe_get(pedido, 'job', 'name')}
-💰 Centro de Custo: {safe_get(pedido, 'costCenter', 'name')}
-📦 Fornecedor: {safe_get(pedido, 'supplier', 'corporateName')} (CNPJ {safe_get(pedido, 'supplier', 'cnpj', default='-')})
-🧾 Condição de Pagamento: {safe_get(pedido, 'paymentCondition', 'description')}
-📝 Observações: {pedido.get('observation', 'Sem observações')}
-💵 Valor Total: R$ {pedido.get('totalAmount', 0):,.2f}
+            resumo = f"""🧾 *Resumo do Pedido {pid}:*
+🏢 Empresa: Não informado
+🏗️ Obra: Não informado
+💰 Centro de Custo: Não informado
+🤝 Fornecedor: {pedido.get('supplierName', 'Não informado')} (CNPJ -)
+🧾 Condição de Pagamento: {pedido.get('paymentCondition', 'Não informada')}
+📝 Observações: {pedido.get('notes', 'Sem observações')}
+💵 Valor Total: {fmt(pedido.get('totalAmount', 0))}
 """
 
-            tabela = formatar_itens_tabela(itens)
             botoes = [
                 {"label": "Autorizar Pedido", "action": "autorizar_pedido", "pedido_id": pid},
                 {"label": "Reprovar Pedido", "action": "reprovar_pedido", "pedido_id": pid},
                 {"label": "Voltar ao Menu", "action": "menu_inicial"}
             ]
+
             return {"text": resumo, "table": tabela, "buttons": botoes}
 
-        # === AUTORIZAR ===
+        # --- Autorizar ---
         elif acao == "autorizar_pedido":
-            pid = params.get("pedido_id")
+            pid = params.get("pedido_id") or user_context.get(msg.user)
             if not pid:
-                return {"text": "Informe o número do pedido a autorizar.", "buttons": menu}
+                return {"text": "Informe o número do pedido para autorizar.", "buttons": menu}
+            pid = int(pid)
             sucesso = autorizar_pedido(pid)
             if sucesso:
                 return {"text": f"✅ Pedido {pid} autorizado com sucesso!", "buttons": menu}
             return {"text": f"❌ Falha ao autorizar o pedido {pid}.", "buttons": menu}
 
-        # === REPROVAR ===
+        # --- Reprovar ---
         elif acao == "reprovar_pedido":
-            pid = params.get("pedido_id")
+            pid = params.get("pedido_id") or user_context.get(msg.user)
             if not pid:
-                return {"text": "Informe o número do pedido a reprovar.", "buttons": menu}
+                return {"text": "Informe o número do pedido para reprovar.", "buttons": menu}
+            pid = int(pid)
             sucesso = reprovar_pedido(pid)
             if sucesso:
                 return {"text": f"🚫 Pedido {pid} reprovado com sucesso!", "buttons": menu}
             return {"text": f"❌ Falha ao reprovar o pedido {pid}.", "buttons": menu}
 
-        # === PDF ===
+        # --- PDF ---
         elif acao == "relatorio_pdf":
-            pid = params.get("pedido_id")
+            pid = params.get("pedido_id") or user_context.get(msg.user)
+            if not pid:
+                return {"text": "Informe o número do pedido para gerar o PDF.", "buttons": menu}
+            pid = int(pid)
             pdf_bytes = gerar_relatorio_pdf_bytes(pid)
             if pdf_bytes:
                 pdf_base64 = base64.b64encode(pdf_bytes).decode()
-                return {"text": f"📄 PDF do pedido {pid} gerado com sucesso!", "pdf_base64": pdf_base64}
+                return {
+                    "text": f"📄 PDF do pedido {pid} gerado com sucesso!",
+                    "pdf_base64": pdf_base64,
+                    "filename": f"pedido_{pid}.pdf",
+                    "buttons": menu
+                }
             return {"text": "❌ Erro ao gerar o PDF.", "buttons": menu}
 
         else:
-            return {"text": "Desculpe, não entendi o que você quis dizer.", "buttons": menu}
+            return {"text": f"Ação '{acao}' não reconhecida.", "buttons": menu}
 
     except Exception as e:
         logging.error("Erro geral:", exc_info=e)
