@@ -28,13 +28,25 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# === MODELO DE MENSAGEM ===
+# === MODELO ===
 class Message(BaseModel):
     user: str
     text: str
 
 
-# === INTERPRETAÇÃO DA MENSAGEM ===
+# === SAFE GET ===
+def safe_get(dado, *chaves, default="Não informado"):
+    """Evita erro de atributo quando o campo for string em vez de dict."""
+    valor = dado
+    for chave in chaves:
+        if isinstance(valor, dict):
+            valor = valor.get(chave)
+        else:
+            return valor if valor else default
+    return valor if valor else default
+
+
+# === INTERPRETAÇÃO IA ===
 def entender_intencao(texto: str):
     openai.api_key = os.getenv("OPENAI_API_KEY")
     prompt = f"""
@@ -63,7 +75,7 @@ Mensagem: "{texto}"
         return {"acao": None, "erro": str(e)}
 
 
-# === FORMATAÇÃO DE TABELA DE ITENS ===
+# === FORMATAÇÃO DE ITENS ===
 def formatar_itens_tabela(itens):
     if not itens:
         return None
@@ -82,7 +94,7 @@ def formatar_itens_tabela(itens):
     return {"headers": headers, "rows": rows, "total": total}
 
 
-# === ENDPOINT PRINCIPAL ===
+# === ENDPOINT ===
 @app.post("/mensagem")
 async def mensagem(msg: Message):
     logging.info(f"📩 Mensagem recebida: {msg.user} -> {msg.text}")
@@ -100,7 +112,7 @@ async def mensagem(msg: Message):
         return {"text": "Olá 👋! Sou a Constru.IA. Em que posso ajudar hoje?", "buttons": menu}
 
     try:
-        # === LISTAR PEDIDOS PENDENTES ===
+        # === LISTAR PEDIDOS ===
         if acao == "listar_pedidos_pendentes":
             pedidos = listar_pedidos_pendentes()
             if not pedidos:
@@ -119,7 +131,7 @@ async def mensagem(msg: Message):
                 })
             return {"text": texto.strip(), "buttons": botoes}
 
-        # === MOSTRAR ITENS DO PEDIDO ===
+        # === ITENS DO PEDIDO ===
         elif acao == "itens_pedido":
             pid = params.get("pedido_id")
             if not pid:
@@ -136,11 +148,11 @@ async def mensagem(msg: Message):
             resumo = f"""
 📄 *Resumo do Pedido {pid}:*
 
-🏢 Empresa: {pedido.get('enterprise', {}).get('name', 'Não informado')}
-🏗️ Obra: {pedido.get('job', {}).get('name', 'Não informado')}
-💰 Centro de Custo: {pedido.get('costCenter', {}).get('name', 'Não informado')}
-📦 Fornecedor: {pedido.get('supplier', {}).get('corporateName', 'Não informado')} (CNPJ {pedido.get('supplier', {}).get('cnpj', '-')})
-🧾 Condição de Pagamento: {pedido.get('paymentCondition', {}).get('description', 'Não informado')}
+🏢 Empresa: {safe_get(pedido, 'enterprise', 'name')}
+🏗️ Obra: {safe_get(pedido, 'job', 'name')}
+💰 Centro de Custo: {safe_get(pedido, 'costCenter', 'name')}
+📦 Fornecedor: {safe_get(pedido, 'supplier', 'corporateName')} (CNPJ {safe_get(pedido, 'supplier', 'cnpj', default='-')})
+🧾 Condição de Pagamento: {safe_get(pedido, 'paymentCondition', 'description')}
 📝 Observações: {pedido.get('observation', 'Sem observações')}
 💵 Valor Total: R$ {pedido.get('totalAmount', 0):,.2f}
 """
