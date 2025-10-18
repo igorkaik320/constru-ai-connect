@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
+import { cn } from "@/lib/utils";
 import {
   Sidebar,
   SidebarContent,
@@ -41,8 +42,8 @@ interface Conversation {
 
 interface ConversationsSidebarProps {
   currentConversationId: string | null;
-  onSelectConversation: (id: string) => void;
-  onCreateConversation: () => void;
+  onSelectConversation: (conversation: Conversation) => void;
+  onCreateConversation: (conversation: Conversation) => void;
 }
 
 export function ConversationsSidebar({
@@ -77,6 +78,11 @@ export function ConversationsSidebar({
     }
 
     setConversations(data || []);
+    
+    // Se não há conversa atual e existem conversas, selecionar a primeira
+    if (!currentConversationId && data && data.length > 0) {
+      onSelectConversation(data[0]);
+    }
   };
 
   const handleRename = async () => {
@@ -138,7 +144,21 @@ export function ConversationsSidebar({
               <Button
                 size="sm"
                 variant="ghost"
-                onClick={onCreateConversation}
+                onClick={async () => {
+                  const { data: { user } } = await supabase.auth.getUser();
+                  if (!user) return;
+                  
+                  const { data, error } = await supabase
+                    .from("conversations")
+                    .insert({ title: "Nova Conversa", user_id: user.id })
+                    .select()
+                    .single();
+                  
+                  if (!error && data) {
+                    await loadConversations();
+                    onCreateConversation(data);
+                  }
+                }}
                 className="h-8 w-8 p-0 hover:bg-purple-700/30 text-purple-400"
               >
                 <Plus className="h-4 w-4" />
@@ -150,7 +170,7 @@ export function ConversationsSidebar({
                 {conversations.map((conv) => (
                   <SidebarMenuItem key={conv.id}>
                     <SidebarMenuButton
-                      onClick={() => onSelectConversation(conv.id)}
+                      onClick={() => onSelectConversation(conv)}
                       isActive={currentConversationId === conv.id}
                       className={cn(
                         "flex w-full text-sm rounded-lg px-3 py-2 transition-all",
