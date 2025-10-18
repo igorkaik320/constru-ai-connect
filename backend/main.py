@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import logging
+import base64
 from sienge.sienge_pedidos import (
     listar_pedidos_pendentes,
     buscar_pedido_por_id,
@@ -11,7 +12,8 @@ from sienge.sienge_pedidos import (
     buscar_fornecedor,
     itens_pedido,
     autorizar_pedido,
-    reprovar_pedido
+    reprovar_pedido,
+    gerar_relatorio_pdf_bytes
 )
 
 logging.basicConfig(level=logging.INFO)
@@ -46,11 +48,10 @@ async def mensagem(msg: Message):
         {"label": "Ver Itens do Pedido", "action": "itens_pedido"}
     ]
 
-    # === Comando de menu ===
     if any(p in texto for p in ["menu", "voltar", "início", "inicio"]):
         return {"text": "Escolha uma opção abaixo 👇", "buttons": botoes_iniciais}
 
-    # === Listar pedidos pendentes ===
+    # === LISTAR PEDIDOS ===
     if "pendente" in texto:
         pedidos = listar_pedidos_pendentes()
         if not pedidos:
@@ -60,7 +61,7 @@ async def mensagem(msg: Message):
             resposta += f"• Pedido {p['id']} — {p.get('supplierName', 'Fornecedor não informado')} — {fmt(p.get('totalAmount', 0))}\n"
         return {"text": resposta.strip(), "buttons": botoes_iniciais}
 
-    # === Itens do pedido ===
+    # === ITENS DO PEDIDO ===
     if "item" in texto or "itens" in texto:
         pid = "".join(filter(str.isdigit, texto))
         if not pid:
@@ -70,7 +71,6 @@ async def mensagem(msg: Message):
         if not pedido:
             return {"text": f"❌ Pedido {pid} não encontrado.", "buttons": botoes_iniciais}
 
-        # Dados complementares (com fallback)
         empresa = buscar_empresa(pedido.get("companyId")) or {}
         obra = buscar_obra(pedido.get("buildingId")) or {}
         centro = buscar_centro_custo(pedido.get("costCenterId")) or {}
@@ -112,7 +112,7 @@ async def mensagem(msg: Message):
         ]
         return {"text": texto_resumo, "buttons": botoes}
 
-    # === Autorizar pedido ===
+    # === AUTORIZAR ===
     if "autorizar" in texto:
         pid = "".join(filter(str.isdigit, texto))
         if not pid:
@@ -120,12 +120,29 @@ async def mensagem(msg: Message):
         sucesso = autorizar_pedido(pid)
         return {"text": "✅ Pedido autorizado!" if sucesso else "❌ Falha ao autorizar.", "buttons": botoes_iniciais}
 
-    # === Reprovar pedido ===
+    # === REPROVAR ===
     if "reprovar" in texto:
         pid = "".join(filter(str.isdigit, texto))
         if not pid:
             return {"text": "Informe o número do pedido para reprovar.", "buttons": botoes_iniciais}
         sucesso = reprovar_pedido(pid)
         return {"text": "🚫 Pedido reprovado!" if sucesso else "❌ Falha ao reprovar.", "buttons": botoes_iniciais}
+
+    # === EMITIR PDF ===
+    if "pdf" in texto or "relatorio" in texto:
+        pid = "".join(filter(str.isdigit, texto))
+        if not pid:
+            return {"text": "Por favor, informe o número do pedido para gerar o PDF.", "buttons": botoes_iniciais}
+
+        pdf_bytes = gerar_relatorio_pdf_bytes(pid)
+        if not pdf_bytes:
+            return {"text": f"❌ Não foi possível gerar o PDF do pedido {pid}.", "buttons": botoes_iniciais}
+
+        pdf_base64 = base64.b64encode(pdf_bytes).decode("utf-8")
+        link = f"data:application/pdf;base64,{pdf_base64}"
+        return {
+            "text": f"📄 PDF do Pedido {pid} gerado com sucesso!\n\n[🔗 Clique aqui para visualizar o relatório]({link})",
+            "buttons": botoes_iniciais
+        }
 
     return {"text": "Desculpe, não entendi sua solicitação.", "buttons": botoes_iniciais}
