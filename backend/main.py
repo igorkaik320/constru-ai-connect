@@ -1,8 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-import os
-import json
 import logging
 import base64
 import re
@@ -19,11 +17,9 @@ from sienge.sienge_pedidos import (
     buscar_fornecedor,
 )
 from sienge.sienge_boletos import (
+    buscar_boletos_por_cpf,
     gerar_link_boleto,
-    enviar_boleto_email,
-    buscar_boletos_por_cpf,  # ✅ Nova função inteligente
 )
-from sienge.sienge_clientes import buscar_cliente_por_cpf
 
 logging.basicConfig(level=logging.INFO)
 
@@ -38,7 +34,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
 class Message(BaseModel):
     user: str
     text: str
@@ -52,28 +47,6 @@ def money(v):
         return "R$ 0,00"
 
 
-def formatar_itens_tabela(itens):
-    if not itens:
-        return None
-    headers = ["Nº", "Código", "Descrição", "Qtd", "Unid", "Valor Unit", "Total"]
-    rows = []
-    total_geral = 0.0
-    for i, item in enumerate(itens, 1):
-        codigo = item.get("resourceCode") or "-"
-        desc = (
-            item.get("resourceDescription")
-            or item.get("resourceReference")
-            or "Sem descrição"
-        )
-        qtd = float(item.get("quantity") or 0)
-        unid = item.get("unitOfMeasure") or "-"
-        valor_unit = float(item.get("unitPrice") or 0)
-        total = qtd * valor_unit
-        total_geral += total
-        rows.append([i, codigo, desc, qtd, unid, round(valor_unit, 2), round(total, 2)])
-    return {"headers": headers, "rows": rows, "total": round(total_geral, 2)}
-
-
 # ===== NLU =====
 def entender_intencao(texto: str):
     t = (texto or "").strip().lower()
@@ -82,43 +55,30 @@ def entender_intencao(texto: str):
     if any(k in t for k in ["pedidos pendentes", "listar pendentes", "listar_pedidos_pendentes"]):
         return {"acao": "listar_pedidos_pendentes", "parametros": {}}
 
-    if t.startswith("itens do pedido"):
-        partes = t.split()
-        pid = next((p for p in partes if p.isdigit()), None)
-        if pid:
-            return {"acao": "itens_pedido", "parametros": {"pedido_id": int(pid)}}
-
-    if t.startswith("autorizar_pedido") or "autorizar pedido" in t:
-        partes = t.split()
-        pid = next((p for p in partes if p.isdigit()), None)
-        if pid:
-            return {"acao": "autorizar_pedido", "parametros": {"pedido_id": int(pid)}}
-
-    if t.startswith("reprovar_pedido") or "reprovar pedido" in t:
-        partes = t.split()
-        pid = next((p for p in partes if p.isdigit()), None)
-        if pid:
-            return {"acao": "reprovar_pedido", "parametros": {"pedido_id": int(pid)}}
-
-    if "pdf" in t or "relatório" in t or t.startswith("relatorio_pdf"):
+    if "autorizar pedido" in t:
         pid = next((p for p in t.split() if p.isdigit()), None)
-        if pid:
-            return {"acao": "relatorio_pdf", "parametros": {"pedido_id": int(pid)}}
+        return {"acao": "autorizar_pedido", "parametros": {"pedido_id": int(pid)}} if pid else {}
 
-    # BOLETOS 🧾
-    if "enviar boleto" in t:
-        nums = [int(n) for n in t.split() if n.isdigit()]
-        if len(nums) >= 2:
-            return {"acao": "enviar_boleto", "parametros": {"titulo_id": nums[0], "parcela_id": nums[1]}}
+    if "reprovar pedido" in t:
+        pid = next((p for p in t.split() if p.isdigit()), None)
+        return {"acao": "reprovar_pedido", "parametros": {"pedido_id": int(pid)}} if pid else {}
 
-    if "link boleto" in t or "segunda via boleto" in t or "gerar link boleto" in t:
-        nums = [int(n) for n in t.split() if n.isdigit()]
+    if "itens do pedido" in t:
+        pid = next((p for p in t.split() if p.isdigit()), None)
+        return {"acao": "itens_pedido", "parametros": {"pedido_id": int(pid)}} if pid else {}
+
+    if "pdf" in t or "relatório" in t:
+        pid = next((p for p in t.split() if p.isdigit()), None)
+        return {"acao": "relatorio_pdf", "parametros": {"pedido_id": int(pid)}} if pid else {}
+
+    # BOLETOS (CPF ou 2ª via)
+    if "segunda via cpf" in t or "boleto cpf" in t:
+        return {"acao": "buscar_boletos_cpf", "parametros": {"texto": t}}
+
+    if "gerar boleto" in t or "2ª via" in t or "segunda via" in t:
+        nums = [int(n) for n in re.findall(r"\d+", t)]
         if len(nums) >= 2:
             return {"acao": "link_boleto", "parametros": {"titulo_id": nums[0], "parcela_id": nums[1]}}
-
-    # CPF (busca boletos por CPF)
-    if "cpf" in t:
-        return {"acao": "buscar_boletos_cpf", "parametros": {"texto": t}}
 
     return {"acao": None}
 
@@ -136,14 +96,9 @@ async def mensagem(msg: Message):
 
     menu_inicial = [
         {"label": "Pedidos Pendentes", "action": "listar_pedidos_pendentes"},
-        {"label": "Emitir PDF", "action": "relatorio_pdf"},
-        {"label": "Ver Itens do Pedido", "action": "itens_pedido"},
-        {"label": "Enviar Boleto", "action": "enviar_boleto"},
-        {"label": "Gerar Link Boleto", "action": "link_boleto"},
+        {"label": "Gerar PDF", "action": "relatorio_pdf"},
+        {"label": "Consultar Boletos por CPF", "action": "buscar_boletos_cpf"},
     ]
-
-    if not acao:
-        return {"text": "Escolha uma opção:", "buttons": menu_inicial}
 
     try:
         # === PEDIDOS ===
@@ -152,15 +107,8 @@ async def mensagem(msg: Message):
             if not pedidos:
                 return {"text": "📭 Nenhum pedido pendente de autorização encontrado.", "buttons": menu_inicial}
 
-            linhas = []
-            for p in pedidos:
-                pid = p.get("id")
-                total = money(p.get("totalAmount"))
-                fornecedor = "Fornecedor não informado"
-                linhas.append(f"• Pedido {pid} — {fornecedor} — {total}")
-
-            return {"text": "📋 Pedidos pendentes de autorização:\n\n" + "\n".join(linhas),
-                    "buttons": menu_inicial}
+            linhas = [f"• Pedido {p['id']} — {money(p.get('totalAmount'))}" for p in pedidos]
+            return {"text": "📋 Pedidos pendentes:\n\n" + "\n".join(linhas), "buttons": menu_inicial}
 
         if acao == "itens_pedido":
             pid = parametros.get("pedido_id")
@@ -175,7 +123,6 @@ async def mensagem(msg: Message):
             cc = buscar_centro_custo(pedido.get("costCenterId"))
             forn = buscar_fornecedor(pedido.get("supplierId"))
 
-            itens = itens_pedido(pid)
             resumo = (
                 f"🧾 Pedido {pid}\n"
                 f"🏗️ Obra: {(obra or {}).get('description', '-')}\n"
@@ -183,16 +130,7 @@ async def mensagem(msg: Message):
                 f"🤝 Fornecedor: {(forn or {}).get('name', '-')}\n"
                 f"💵 Total: {money(pedido.get('totalAmount'))}\n"
             )
-            if itens:
-                resumo += "\n📦 Itens:\n" + "\n".join(
-                    [f"- {i.get('resourceDescription')} ({i.get('quantity')} {i.get('unitOfMeasure')})"
-                     for i in itens]
-                )
-            botoes = [
-                {"label": "Autorizar Pedido", "action": "autorizar_pedido", "pedido_id": pid},
-                {"label": "Reprovar Pedido", "action": "reprovar_pedido", "pedido_id": pid},
-            ]
-            return {"text": resumo, "buttons": botoes}
+            return {"text": resumo, "buttons": menu_inicial}
 
         if acao == "autorizar_pedido":
             pid = parametros.get("pedido_id")
@@ -220,38 +158,40 @@ async def mensagem(msg: Message):
                 return {"text": "🧾 Informe um CPF válido (ex: 123.456.789-00)."}
 
             cpf = re.sub(r'\D', '', cpf_match.group(0))
-            msg_boletos = buscar_boletos_por_cpf(cpf)
-            return {"text": msg_boletos, "buttons": menu_inicial}
+            resultado = buscar_boletos_por_cpf(cpf)
+            if "erro" in resultado:
+                return {"text": resultado["erro"]}
 
-        if acao == "enviar_boleto":
-            titulo = parametros.get("titulo_id")
-            parcela = parametros.get("parcela_id")
-            if not titulo or not parcela:
-                return {
-                    "text": "⚠️ Informe o ID do título e da parcela. Exemplo: enviar boleto 123 1",
-                    "buttons": menu_inicial
-                }
+            nome = resultado["nome"]
+            boletos = resultado["boletos"]
 
-            msg_envio = enviar_boleto_email(titulo, parcela)
-            return {"text": msg_envio, "buttons": menu_inicial}
+            linhas = []
+            botoes = []
+            for b in boletos:
+                linhas.append(f"💳 **Título {b['titulo_id']}** — {money(b['valor'])} — Venc.: {b['vencimento']}")
+                botoes.append({
+                    "label": f"2ª via {b['titulo_id']}/{b['parcela_id']}",
+                    "action": "link_boleto",
+                    "titulo_id": b["titulo_id"],
+                    "parcela_id": b["parcela_id"]
+                })
+
+            return {"text": f"📋 Boletos em aberto para **{nome}:**\n\n" + "\n".join(linhas), "buttons": botoes}
 
         if acao == "link_boleto":
             titulo = parametros.get("titulo_id")
             parcela = parametros.get("parcela_id")
             if not titulo or not parcela:
-                return {
-                    "text": "⚠️ Informe o ID do título e da parcela. Exemplo: link boleto 123 1",
-                    "buttons": menu_inicial
-                }
+                return {"text": "⚠️ Informe o título e parcela (ex: 2ª via 267 1)", "buttons": menu_inicial}
 
             msg_link = gerar_link_boleto(titulo, parcela)
             return {"text": msg_link, "buttons": menu_inicial}
 
-        return {"text": f"Ação {acao} reconhecida, mas não implementada.", "buttons": menu_inicial}
+        return {"text": "🤖 Não entendi o comando.", "buttons": menu_inicial}
 
     except Exception as e:
         logging.exception("Erro geral:")
-        return {"text": f"❌ Ocorreu um erro ao processar sua solicitação: {e}", "buttons": menu_inicial}
+        return {"text": f"❌ Ocorreu um erro: {e}", "buttons": menu_inicial}
 
 
 # ===== Health check =====
