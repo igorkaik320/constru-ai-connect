@@ -38,11 +38,9 @@ const Index = () => {
     try {
       const response = await fetch("https://constru-ai-connect.onrender.com/mensagem", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          user: "igorkaik320@gmail.com", // email fixo
+          user: "igorkaik320@gmail.com",
           text,
         }),
       });
@@ -123,21 +121,24 @@ const Index = () => {
               </div>
             ) : (
               messages.map((m, i) => (
-                <div key={i}>
+                <div key={i} className="space-y-2">
+                  {/* ✅ Balão principal da mensagem */}
                   <ChatMessage
                     message={m}
                     isLoading={isLoading && i === messages.length - 1}
                     onAction={handleAction}
                   />
 
-                  {/* 🔹 Renderiza Markdown para links do boleto */}
-                  {m.role === "assistant" && (
-                    <div className="prose prose-invert max-w-none mt-2">
-                      <ReactMarkdown>{m.content}</ReactMarkdown>
-                    </div>
-                  )}
+                  {/* ✅ Exibe Markdown apenas para mensagens que contêm links (boletos etc) */}
+                  {m.role === "assistant" &&
+                    m.content &&
+                    (m.content.includes("http") || m.content.includes("Clique aqui")) && (
+                      <div className="prose prose-invert max-w-none mt-2">
+                        <ReactMarkdown>{m.content}</ReactMarkdown>
+                      </div>
+                    )}
 
-                  {/* 🔹 Botão de download do PDF */}
+                  {/* ✅ Botão de download do PDF */}
                   {m.pdf_base64 && (
                     <a
                       href={`data:application/pdf;base64,${m.pdf_base64}`}
