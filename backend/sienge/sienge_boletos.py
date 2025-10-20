@@ -1,19 +1,21 @@
 import requests
-from base64 import b64encode
 import logging
+from base64 import b64encode
 from typing import Optional, Dict, Any
 
-# === CONFIGURAÇÕES ===
+# ==========================
+# 🔧 CONFIGURAÇÕES SIENGE
+# ==========================
 subdominio = "cctcontrol"
 usuario = "cctcontrol-api"
 senha = "9SQ2MaNrFOeZOOuOAqeSRy7bYWYDDf85"
 
 BASE_URL = f"https://api.sienge.com.br/{subdominio}/public/api/v1"
 
-# Auth básico
+# Auth básico (Base64)
 _token = b64encode(f"{usuario}:{senha}".encode()).decode()
 
-# Cabeçalhos padrão JSON
+# Cabeçalhos
 json_headers = {
     "Authorization": f"Basic {_token}",
     "accept": "application/json",
@@ -22,86 +24,66 @@ json_headers = {
 
 logging.basicConfig(level=logging.INFO)
 
-# ==========================================================
-#  FUNÇÕES PARA BOLETOS (segunda via e link temporário)
-# ==========================================================
 
-def gerar_link_boleto(bill_receivable_id: int, installment_id: int) -> Optional[Dict[str, Any]]:
+# ==========================
+# 🧾 FUNÇÕES DE BOLETO
+# ==========================
+
+def gerar_link_boleto(titulo_id: int, parcela_id: int) -> str:
     """
-    Gera o link temporário e linha digitável do boleto via GET /payment-slip-notification.
-    Parâmetros obrigatórios: billReceivableId e installmentId.
+    Gera o link para o boleto de segunda via (GET /payment-slip-notification)
     """
     url = f"{BASE_URL}/payment-slip-notification"
     params = {
-        "billReceivableId": bill_receivable_id,
-        "installmentId": installment_id
+        "billReceivableId": titulo_id,
+        "installmentId": parcela_id,
     }
 
-    try:
-        r = requests.get(url, headers=json_headers, params=params, timeout=30)
-        logging.info(f"GET {url} -> {r.status_code}")
+    logging.info("GET %s -> params=%s", url, params)
+    r = requests.get(url, headers=json_headers, params=params, timeout=30)
+    logging.info("GET %s -> %s", url, r.status_code)
 
-        if r.status_code == 200:
+    if r.status_code == 200:
+        try:
             data = r.json()
-            link = data.get("link")
-            barcode = data.get("barCode")
+            link = data.get("url")
+            linha_digitavel = data.get("digitableLine")
+
             if link:
-                return {
-                    "success": True,
-                    "message": (
-                        f"💳 Link do boleto (válido por 5 minutos): {link}\n"
-                        f"🏦 Linha digitável: {barcode or '-'}"
-                    ),
-                    "link": link,
-                    "barCode": barcode
-                }
-            return {
-                "success": False,
-                "message": "❌ Nenhum link retornado pela API do Sienge."
-            }
+                return (
+                    "💳 **Boleto gerado com sucesso!**\n\n"
+                    f"🔗 [Clique aqui para abrir o boleto]({link})\n"
+                    f"🏦 Linha digitável: `{linha_digitavel or '-'}`\n\n"
+                    "⚠️ O link expira em **5 minutos**."
+                )
+            else:
+                return "⚠️ Boleto gerado, mas o link não foi retornado pela API."
 
-        logging.warning(f"Falha gerar link boleto ({r.status_code}): {r.text}")
-        return {
-            "success": False,
-            "message": f"❌ Falha ao gerar link do boleto (status {r.status_code})."
-        }
+        except Exception as e:
+            logging.warning("Erro ao processar resposta do boleto: %s", e)
+            return f"❌ Erro ao processar o retorno do boleto: {e}"
 
-    except Exception as e:
-        logging.exception("Erro ao gerar link do boleto:")
-        return {
-            "success": False,
-            "message": f"❌ Erro interno ao gerar link do boleto: {e}"
-        }
+    else:
+        logging.warning("Falha gerar link boleto (%s): %s", r.status_code, r.text)
+        return f"❌ Erro ao gerar boleto ({r.status_code}): {r.text}"
 
 
-def enviar_boleto_email(bill_receivable_id: int, installment_id: int) -> Dict[str, Any]:
+def enviar_boleto_email(titulo_id: int, parcela_id: int) -> str:
     """
-    Envia o boleto de segunda via por e-mail ao cliente (POST /payment-slip-notification).
-    Parâmetros obrigatórios: billReceivableId e installmentId.
+    Envia o boleto de segunda via por e-mail (POST /payment-slip-notification)
     """
     url = f"{BASE_URL}/payment-slip-notification"
     body = {
-        "billReceivableId": bill_receivable_id,
-        "installmentId": installment_id
+        "billReceivableId": titulo_id,
+        "installmentId": parcela_id,
     }
 
-    try:
-        r = requests.post(url, headers=json_headers, json=body, timeout=30)
-        logging.info(f"POST {url} -> {r.status_code}")
+    logging.info("POST %s -> body=%s", url, body)
+    r = requests.post(url, headers=json_headers, json=body, timeout=30)
+    logging.info("POST %s -> %s", url, r.status_code)
 
-        if r.status_code == 200:
-            return {"success": True, "message": "📧 Boleto enviado por e-mail com sucesso!"}
-        elif r.status_code == 404:
-            return {"success": False, "message": "❌ Título ou parcela não encontrados."}
-        elif r.status_code == 400:
-            return {"success": False, "message": "⚠️ Requisição inválida. Verifique os parâmetros enviados."}
-
-        logging.warning(f"Falha enviar boleto ({r.status_code}): {r.text}")
-        return {
-            "success": False,
-            "message": f"❌ Falha ao enviar boleto (status {r.status_code})."
-        }
-
-    except Exception as e:
-        logging.exception("Erro ao enviar boleto:")
-        return {"success": False, "message": f"❌ Erro interno ao enviar boleto: {e}"}
+    if r.status_code in (200, 204):
+        return "📧 Boleto enviado com sucesso para o e-mail do cliente!"
+    else:
+        logging.warning("Falha enviar boleto (%s): %s", r.status_code, r.text)
+        return f"❌ Falha ao enviar boleto ({r.status_code}): {r.text}"
