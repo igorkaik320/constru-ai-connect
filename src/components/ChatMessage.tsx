@@ -22,7 +22,7 @@ export const ChatMessage = ({ message, isLoading, onAction }: ChatMessageProps) 
   const isUser = message.role === "user";
   const [displayedText, setDisplayedText] = useState("");
 
-  // ✨ Efeito de digitação da IA
+  // ✨ Efeito de digitação
   useEffect(() => {
     if (message.role === "assistant" && !isLoading) {
       setDisplayedText("");
@@ -36,9 +36,11 @@ export const ChatMessage = ({ message, isLoading, onAction }: ChatMessageProps) 
     }
   }, [message.content, message.role, isLoading]);
 
-  // 🔗 Captura o link de boleto diretamente da frase “Clique aqui para abrir o boleto”
-  const match = message.content?.match(/Clique aqui.*?(https?:\/\/\S+)/i);
-  const boletoLink = match ? match[1] : null;
+  // 🔗 Captura link real do boleto (remove do texto)
+  const linkRegex = /(https?:\/\/[^\s]+)/g;
+  const links = message.content?.match(linkRegex);
+  const boletoLink = links ? links.find((url) => url.includes("sienge")) : null;
+  const textoSemLink = message.content?.replace(linkRegex, "").trim() || message.content;
 
   return (
     <motion.div
@@ -79,101 +81,26 @@ export const ChatMessage = ({ message, isLoading, onAction }: ChatMessageProps) 
             </div>
           )}
 
-          {/* Conteúdo da mensagem */}
+          {/* Conteúdo principal (sem link visível) */}
           {message.role === "assistant" && isLoading ? (
             <div className="flex gap-1">
               <span className="w-2 h-2 bg-gray-300 rounded-full animate-bounce [animation-delay:-0.3s]" />
               <span className="w-2 h-2 bg-gray-300 rounded-full animate-bounce [animation-delay:-0.15s]" />
               <span className="w-2 h-2 bg-gray-300 rounded-full animate-bounce" />
             </div>
-          ) : message.type === "pedidos" && message.pedidos ? (
-            // === PEDIDOS ===
-            <div className="space-y-3">
-              <p>{message.content}</p>
-              {message.pedidos.map((p) => (
-                <div
-                  key={p.codigo}
-                  className="border border-gray-700 rounded-xl p-4 bg-[#141416] shadow-inner flex flex-col gap-2"
-                >
-                  <div className="flex justify-between items-center">
-                    <h3 className="font-semibold text-gray-200">{`Pedido ${p.codigo}`}</h3>
-                    <span className="text-xs text-gray-400">{p.data}</span>
-                  </div>
-                  <p className="text-sm text-gray-400">
-                    Fornecedor: <b className="text-gray-200">{p.fornecedor}</b>
-                  </p>
-                  <p className="text-sm text-gray-400">
-                    Valor: <b className="text-gray-200">R$ {p.valor}</b> — Status:{" "}
-                    <span className="text-yellow-400">{p.status}</span>
-                  </p>
-                  <div className="flex gap-2 mt-2">
-                    <button
-                      onClick={() => onAction?.(p.codigo, "autorizar")}
-                      className="flex items-center gap-1 px-3 py-1.5 text-sm rounded-lg bg-green-600/80 hover:bg-green-700 text-white transition"
-                    >
-                      <Check className="w-4 h-4" /> Autorizar
-                    </button>
-                    <button
-                      onClick={() => onAction?.(p.codigo, "reprovar")}
-                      className="flex items-center gap-1 px-3 py-1.5 text-sm rounded-lg bg-red-600/80 hover:bg-red-700 text-white transition"
-                    >
-                      <X className="w-4 h-4" /> Reprovar
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : message.type === "itens" && message.table ? (
-            // === ITENS DE PEDIDO ===
-            <div className="overflow-x-auto">
-              <p className="mb-2 text-gray-200">{message.content}</p>
-              <table className="table-auto border-collapse border border-gray-700 w-full text-sm text-gray-300">
-                <thead className="bg-[#2a2a2d]">
-                  <tr>
-                    {message.table.headers.map((h, i) => (
-                      <th key={i} className="border border-gray-700 px-2 py-1 text-left font-medium text-gray-100">
-                        {h}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {message.table.rows.map((row, i) => (
-                    <tr key={i} className="hover:bg-[#222] transition">
-                      {row.map((cell, j) => (
-                        <td key={j} className="border border-gray-700 px-2 py-1">
-                          {cell}
-                        </td>
-                      ))}
-                    </tr>
-                  ))}
-                  {message.table.total && (
-                    <tr className="bg-[#18181a] font-semibold text-gray-100">
-                      <td colSpan={message.table.headers.length - 1} className="border border-gray-700 px-2 py-1">
-                        Total
-                      </td>
-                      <td className="border border-gray-700 px-2 py-1">
-                        {message.table.total}
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
           ) : (
-            // === MENSAGEM DE TEXTO / BOLETO ===
             <div className="prose prose-invert prose-sm max-w-none text-gray-100 leading-relaxed space-y-2">
               <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                {message.role === "assistant" ? displayedText : message.content}
+                {message.role === "assistant" ? displayedText.replace(linkRegex, "") : textoSemLink}
               </ReactMarkdown>
 
-              {/* 🔗 Botão de boleto com link exato do texto */}
+              {/* ✅ Botão funcional de abrir boleto */}
               {boletoLink && (
                 <a
                   href={boletoLink}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="inline-block mt-2 px-4 py-2 rounded-lg bg-blue-600 text-white font-medium hover:bg-blue-700 transition"
+                  className="inline-flex items-center gap-2 mt-3 px-4 py-2 rounded-lg bg-blue-600 text-white font-medium hover:bg-blue-700 transition"
                 >
                   🔗 Abrir boleto
                 </a>
@@ -181,7 +108,7 @@ export const ChatMessage = ({ message, isLoading, onAction }: ChatMessageProps) 
             </div>
           )}
 
-          {/* === BOTÕES DE AÇÃO === */}
+          {/* Botões adicionais */}
           {message.buttons && message.buttons.length > 0 && (
             <div className="flex flex-wrap gap-2 mt-2">
               {message.buttons.map((btn, i) => (
