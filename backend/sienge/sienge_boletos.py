@@ -6,7 +6,7 @@ from typing import Optional, Dict, Any
 # === CONFIGURAÇÕES ===
 subdominio = "cctcontrol"
 usuario = "cctcontrol-api"
-senha = "9SQ2MaNrFOeZOOuOAqeSRy7bYWYDDf85"  # senha da API
+senha = "9SQ2MaNrFOeZOOuOAqeSRy7bYWYDDf85"
 
 BASE_URL = f"https://api.sienge.com.br/{subdominio}/public/api/v1"
 
@@ -27,14 +27,14 @@ logging.basicConfig(level=logging.INFO)
 #  FUNÇÕES PARA BOLETOS (segunda via e link temporário)
 # ==========================================================
 
-def gerar_link_boleto(title_id: int, installment_number: int) -> Optional[Dict[str, Any]]:
+def gerar_link_boleto(bill_receivable_id: int, installment_number: int) -> Optional[Dict[str, Any]]:
     """
     Gera o link temporário e linha digitável de um boleto via GET /payment-slip-notification.
-    O link expira em 5 minutos.
+    Parâmetros obrigatórios: billReceivableId e installmentNumber.
     """
     url = f"{BASE_URL}/payment-slip-notification"
     params = {
-        "titleId": title_id,
+        "billReceivableId": bill_receivable_id,
         "installmentNumber": installment_number
     }
 
@@ -75,13 +75,13 @@ def gerar_link_boleto(title_id: int, installment_number: int) -> Optional[Dict[s
         }
 
 
-def enviar_boleto_email(title_id: int, installment_number: int) -> Dict[str, Any]:
+def enviar_boleto_email(bill_receivable_id: int, installment_number: int) -> Dict[str, Any]:
     """
     Envia o boleto de segunda via por e-mail ao cliente (POST /payment-slip-notification).
     """
     url = f"{BASE_URL}/payment-slip-notification"
     body = {
-        "titleId": title_id,
+        "billReceivableId": bill_receivable_id,
         "installmentNumber": installment_number
     }
 
