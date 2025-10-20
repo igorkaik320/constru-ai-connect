@@ -105,7 +105,7 @@ def entender_intencao(texto: str):
         if len(nums) >= 2:
             return {"acao": "enviar_boleto", "parametros": {"titulo_id": nums[0], "parcela_id": nums[1]}}
 
-    if "link boleto" in t or "segunda via boleto" in t:
+    if "link boleto" in t or "segunda via boleto" in t or "gerar link boleto" in t:
         nums = [int(n) for n in t.split() if n.isdigit()]
         if len(nums) >= 2:
             return {"acao": "link_boleto", "parametros": {"titulo_id": nums[0], "parcela_id": nums[1]}}
