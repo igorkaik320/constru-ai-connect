@@ -13,6 +13,8 @@ interface ChatMessageProps {
     pedidos?: any[];
     table?: { headers: string[]; rows: any[][]; total?: number };
     buttons?: { label: string; action: string; pedido_id?: number }[];
+    pdf_base64?: string;
+    filename?: string;
   };
   isLoading?: boolean;
   onAction?: (codigo: number, acao: "autorizar" | "reprovar") => void;
@@ -22,7 +24,7 @@ export const ChatMessage = ({ message, isLoading, onAction }: ChatMessageProps) 
   const isUser = message.role === "user";
   const [displayedText, setDisplayedText] = useState("");
 
-  // ✨ Efeito de digitação
+  // ✨ Efeito de digitação da IA
   useEffect(() => {
     if (message.role === "assistant" && !isLoading) {
       setDisplayedText("");
@@ -36,22 +38,6 @@ export const ChatMessage = ({ message, isLoading, onAction }: ChatMessageProps) 
     }
   }, [message.content, message.role, isLoading]);
 
-  // 🔗 Captura o link do boleto
-  const linkRegex = /(https?:\/\/[^\s]+)/g;
-  const links = message.content?.match(linkRegex);
-  let boletoLink = links ? links.find((url) => url.includes("visualizar-relatorio")) : null;
-
-  // 🔄 Se tiver link, converte para o formato de download
-  if (boletoLink) {
-    boletoLink = boletoLink.replace("visualizar-relatorio", "download-relatorio");
-  }
-
-  // ✂️ Remove o link do texto original e ajusta a frase
-  const textoLimpo = message.content
-    ?.replace(linkRegex, "")
-    .replace("Clique aqui para abrir o boleto", "Clique no botão abaixo para baixar o boleto")
-    .trim() || message.content;
-
   return (
     <motion.div
       initial={{ opacity: 0, y: 10 }}
@@ -63,7 +49,7 @@ export const ChatMessage = ({ message, isLoading, onAction }: ChatMessageProps) 
       )}
     >
       <div className="max-w-3xl flex gap-4">
-        {/* Avatar da IA */}
+        {/* Avatar IA */}
         {!isUser && (
           <div className="flex-shrink-0 w-9 h-9 rounded-full flex items-center justify-center bg-gradient-to-br from-purple-500 to-blue-500 text-white shadow-lg">
             <Bot className="w-5 h-5" />
@@ -80,33 +66,113 @@ export const ChatMessage = ({ message, isLoading, onAction }: ChatMessageProps) 
           )}
         >
           {!isUser && (
-            <div className="text-xs font-semibold text-purple-400 mb-1">constru.ia</div>
+            <div className="text-xs font-semibold text-purple-400 mb-1">
+              constru.ia
+            </div>
           )}
           {isUser && (
-            <div className="text-xs font-semibold text-blue-300 mb-1 text-right">Você</div>
+            <div className="text-xs font-semibold text-blue-300 mb-1 text-right">
+              Você
+            </div>
           )}
 
-          {/* Texto formatado */}
-          <div className="prose prose-invert prose-sm max-w-none text-gray-100 leading-relaxed space-y-2">
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>
-              {message.role === "assistant" ? displayedText.replace(linkRegex, "") : textoLimpo}
-            </ReactMarkdown>
+          {/* Estado de digitação */}
+          {message.role === "assistant" && isLoading ? (
+            <div className="flex gap-1">
+              <span className="w-2 h-2 bg-gray-300 rounded-full animate-bounce [animation-delay:-0.3s]" />
+              <span className="w-2 h-2 bg-gray-300 rounded-full animate-bounce [animation-delay:-0.15s]" />
+              <span className="w-2 h-2 bg-gray-300 rounded-full animate-bounce" />
+            </div>
+          ) : message.type === "pedidos" && message.pedidos ? (
+            /* === Cards de pedidos === */
+            <div className="space-y-3">
+              <p>{message.content}</p>
+              {message.pedidos.map((p) => (
+                <div
+                  key={p.codigo}
+                  className="border border-gray-700 rounded-xl p-4 bg-[#141416] shadow-inner flex flex-col gap-2"
+                >
+                  <div className="flex justify-between items-center">
+                    <h3 className="font-semibold text-gray-200">{`Pedido ${p.codigo}`}</h3>
+                    <span className="text-xs text-gray-400">{p.data}</span>
+                  </div>
+                  <p className="text-sm text-gray-400">
+                    Fornecedor: <b className="text-gray-200">{p.fornecedor}</b>
+                  </p>
+                  <p className="text-sm text-gray-400">
+                    Valor: <b className="text-gray-200">R$ {p.valor}</b> — Status:{" "}
+                    <span className="text-yellow-400">{p.status}</span>
+                  </p>
+                  <div className="flex gap-2 mt-2">
+                    <button
+                      onClick={() => onAction?.(p.codigo, "autorizar")}
+                      className="flex items-center gap-1 px-3 py-1.5 text-sm rounded-lg bg-green-600/80 hover:bg-green-700 text-white transition"
+                    >
+                      <Check className="w-4 h-4" /> Autorizar
+                    </button>
+                    <button
+                      onClick={() => onAction?.(p.codigo, "reprovar")}
+                      className="flex items-center gap-1 px-3 py-1.5 text-sm rounded-lg bg-red-600/80 hover:bg-red-700 text-white transition"
+                    >
+                      <X className="w-4 h-4" /> Reprovar
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : message.type === "itens" && message.table ? (
+            /* === Tabela de itens === */
+            <div className="overflow-x-auto">
+              <p className="mb-2 text-gray-200">{message.content}</p>
+              <table className="table-auto border-collapse border border-gray-700 w-full text-sm text-gray-300">
+                <thead className="bg-[#2a2a2d]">
+                  <tr>
+                    {message.table.headers.map((h, i) => (
+                      <th
+                        key={i}
+                        className="border border-gray-700 px-2 py-1 text-left font-medium text-gray-100"
+                      >
+                        {h}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {message.table.rows.map((row, i) => (
+                    <tr key={i} className="hover:bg-[#222] transition">
+                      {row.map((cell, j) => (
+                        <td key={j} className="border border-gray-700 px-2 py-1">
+                          {cell}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                  {message.table.total && (
+                    <tr className="bg-[#18181a] font-semibold text-gray-100">
+                      <td
+                        colSpan={message.table.headers.length - 1}
+                        className="border border-gray-700 px-2 py-1"
+                      >
+                        Total
+                      </td>
+                      <td className="border border-gray-700 px-2 py-1">
+                        {message.table.total}
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            /* === Texto normal com Markdown (inclui o link "clique aqui") === */
+            <div className="prose prose-invert prose-sm max-w-none text-gray-100 leading-relaxed">
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                {message.role === "assistant" ? displayedText : message.content}
+              </ReactMarkdown>
+            </div>
+          )}
 
-            {/* ✅ Botão que baixa o boleto diretamente */}
-            {boletoLink && (
-              <a
-                href={boletoLink}
-                target="_blank"
-                rel="noopener noreferrer"
-                download
-                className="inline-flex items-center gap-2 mt-3 px-4 py-2 rounded-lg bg-blue-600 text-white font-medium hover:bg-blue-700 transition"
-              >
-                📄 Baixar boleto
-              </a>
-            )}
-          </div>
-
-          {/* Botões adicionais */}
+          {/* Botões de ação (menu) */}
           {message.buttons && message.buttons.length > 0 && (
             <div className="flex flex-wrap gap-2 mt-2">
               {message.buttons.map((btn, i) => (
