@@ -2,7 +2,6 @@ import requests
 import logging
 import json
 from base64 import b64encode
-from sienge.sienge_clientes import buscar_cliente_por_cpf
 
 # === CONFIGURAÇÕES ===
 subdominio = "cctcontrol"
@@ -21,10 +20,11 @@ json_headers = {
 }
 
 # ==============================================================
-# 🧾 FUNÇÕES DE BOLETO
+# 🧾 FUNÇÕES DE INTEGRAÇÃO DE BOLETOS
 # ==============================================================
 
 def gerar_link_boleto(titulo_id: int, parcela_id: int) -> str:
+    """Gera link de segunda via do boleto no Sienge."""
     url = f"{BASE_URL}/payment-slip-notification"
     params = {"billReceivableId": titulo_id, "installmentId": parcela_id}
 
@@ -57,6 +57,7 @@ def gerar_link_boleto(titulo_id: int, parcela_id: int) -> str:
 
 
 def enviar_boleto_email(titulo_id: int, parcela_id: int) -> str:
+    """Envia boleto de segunda via por e-mail ao cliente."""
     url = f"{BASE_URL}/payment-slip-notification"
     body = {"billReceivableId": titulo_id, "installmentId": parcela_id}
 
@@ -72,11 +73,13 @@ def enviar_boleto_email(titulo_id: int, parcela_id: int) -> str:
 
 
 # ==============================================================
-# 🔍 NOVA FUNÇÃO COMPLETA — buscar_boletos_por_cpf
+# 🔍 FUNÇÃO PRINCIPAL — Buscar boletos por CPF
 # ==============================================================
 
 def buscar_boletos_por_cpf(cpf: str):
-    """Busca boletos de um cliente pelo CPF, procurando via cliente, unidade e obra."""
+    """Busca boletos de um cliente pelo CPF, verificando cliente, unidade e obra."""
+    from sienge.sienge_clientes import buscar_cliente_por_cpf  # ✅ import local
+
     cliente = buscar_cliente_por_cpf(cpf)
     if not cliente:
         return "❌ Cliente não encontrado com esse CPF."
