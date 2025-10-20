@@ -5,6 +5,7 @@ import { ChatHeader } from "@/components/ChatHeader";
 import { ConversationsSidebar } from "@/components/ConversationsSidebar";
 import { SidebarProvider } from "@/components/ui/sidebar";
 import { Bot } from "lucide-react";
+import ReactMarkdown from "react-markdown";
 
 interface Message {
   role: "user" | "assistant";
@@ -129,7 +130,14 @@ const Index = () => {
                     onAction={handleAction}
                   />
 
-                  {/* 🔽 Botão de download do PDF, se existir */}
+                  {/* 🔹 Renderiza Markdown para links do boleto */}
+                  {m.role === "assistant" && (
+                    <div className="prose prose-invert max-w-none mt-2">
+                      <ReactMarkdown>{m.content}</ReactMarkdown>
+                    </div>
+                  )}
+
+                  {/* 🔹 Botão de download do PDF */}
                   {m.pdf_base64 && (
                     <a
                       href={`data:application/pdf;base64,${m.pdf_base64}`}
