@@ -28,7 +28,7 @@ const Index = () => {
 
   useEffect(scrollToBottom, [messages]);
 
-  // 🔹 Envia mensagem ao backend
+  // Envia mensagem ao backend
   const sendMessage = async (text: string) => {
     const userMessage: Message = { role: "user", content: text };
     setMessages((prev) => [...prev, userMessage]);
@@ -70,12 +70,12 @@ const Index = () => {
     }
   };
 
-  // 🔹 Ações (botões da IA)
+  // Ações (botões da IA)
   const handleAction = (pedidoId: number, acao: string) => {
     sendMessage(`${acao} ${pedidoId}`);
   };
 
-  // 🔹 Sugestões iniciais
+  // Sugestões iniciais
   const handleSuggestion = (text: string) => {
     sendMessage(text);
   };
@@ -120,15 +120,14 @@ const Index = () => {
               </div>
             ) : (
               messages.map((m, i) => (
-                <div key={i} className="space-y-2">
-                  {/* ✅ Balão da mensagem */}
+                <div key={i}>
                   <ChatMessage
                     message={m}
                     isLoading={isLoading && i === messages.length - 1}
                     onAction={handleAction}
                   />
 
-                  {/* ✅ Botão de download do PDF */}
+                  {/* Botão de download do PDF gerado (quando vier em base64) */}
                   {m.pdf_base64 && (
                     <a
                       href={`data:application/pdf;base64,${m.pdf_base64}`}
