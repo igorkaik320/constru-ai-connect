@@ -36,8 +36,9 @@ export const ChatMessage = ({ message, isLoading, onAction }: ChatMessageProps) 
     }
   }, [message.content, message.role, isLoading]);
 
-  // 🔗 Extrai o primeiro link HTTP se existir
-  const boletoLink = message.content?.match(/https?:\/\/\S+/)?.[0];
+  // 🔗 Captura o link de boleto diretamente da frase “Clique aqui para abrir o boleto”
+  const match = message.content?.match(/Clique aqui.*?(https?:\/\/\S+)/i);
+  const boletoLink = match ? match[1] : null;
 
   return (
     <motion.div
@@ -78,7 +79,7 @@ export const ChatMessage = ({ message, isLoading, onAction }: ChatMessageProps) 
             </div>
           )}
 
-          {/* Conteúdo */}
+          {/* Conteúdo da mensagem */}
           {message.role === "assistant" && isLoading ? (
             <div className="flex gap-1">
               <span className="w-2 h-2 bg-gray-300 rounded-full animate-bounce [animation-delay:-0.3s]" />
@@ -86,6 +87,7 @@ export const ChatMessage = ({ message, isLoading, onAction }: ChatMessageProps) 
               <span className="w-2 h-2 bg-gray-300 rounded-full animate-bounce" />
             </div>
           ) : message.type === "pedidos" && message.pedidos ? (
+            // === PEDIDOS ===
             <div className="space-y-3">
               <p>{message.content}</p>
               {message.pedidos.map((p) => (
@@ -122,6 +124,7 @@ export const ChatMessage = ({ message, isLoading, onAction }: ChatMessageProps) 
               ))}
             </div>
           ) : message.type === "itens" && message.table ? (
+            // === ITENS DE PEDIDO ===
             <div className="overflow-x-auto">
               <p className="mb-2 text-gray-200">{message.content}</p>
               <table className="table-auto border-collapse border border-gray-700 w-full text-sm text-gray-300">
@@ -158,13 +161,13 @@ export const ChatMessage = ({ message, isLoading, onAction }: ChatMessageProps) 
               </table>
             </div>
           ) : (
-            // 🔹 Mensagem normal (texto e Markdown)
+            // === MENSAGEM DE TEXTO / BOLETO ===
             <div className="prose prose-invert prose-sm max-w-none text-gray-100 leading-relaxed space-y-2">
               <ReactMarkdown remarkPlugins={[remarkGfm]}>
                 {message.role === "assistant" ? displayedText : message.content}
               </ReactMarkdown>
 
-              {/* 🔗 Botão automático de boleto */}
+              {/* 🔗 Botão de boleto com link exato do texto */}
               {boletoLink && (
                 <a
                   href={boletoLink}
