@@ -36,11 +36,19 @@ export const ChatMessage = ({ message, isLoading, onAction }: ChatMessageProps) 
     }
   }, [message.content, message.role, isLoading]);
 
-  // 🔗 Captura link real do boleto (remove do texto)
+  // 🔗 Captura link correto (relatório PDF do boleto)
   const linkRegex = /(https?:\/\/[^\s]+)/g;
   const links = message.content?.match(linkRegex);
-  const boletoLink = links ? links.find((url) => url.includes("sienge")) : null;
-  const textoSemLink = message.content?.replace(linkRegex, "").trim() || message.content;
+  const boletoLink =
+    links && links.length > 0
+      ? links.find((url) => url.includes("visualizar-relatorio") && url.includes("formato=pdf"))
+      : null;
+
+  // 🧹 Remove o link do texto original
+  const textoLimpo = message.content
+    ?.replace(linkRegex, "")
+    .replace("Clique aqui para abrir o boleto", "Clique no botão abaixo para baixar o boleto")
+    .trim() || message.content;
 
   return (
     <motion.div
@@ -91,10 +99,10 @@ export const ChatMessage = ({ message, isLoading, onAction }: ChatMessageProps) 
           ) : (
             <div className="prose prose-invert prose-sm max-w-none text-gray-100 leading-relaxed space-y-2">
               <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                {message.role === "assistant" ? displayedText.replace(linkRegex, "") : textoSemLink}
+                {textoLimpo}
               </ReactMarkdown>
 
-              {/* ✅ Botão funcional de abrir boleto */}
+              {/* ✅ Botão funcional de baixar boleto */}
               {boletoLink && (
                 <a
                   href={boletoLink}
@@ -102,13 +110,13 @@ export const ChatMessage = ({ message, isLoading, onAction }: ChatMessageProps) 
                   rel="noopener noreferrer"
                   className="inline-flex items-center gap-2 mt-3 px-4 py-2 rounded-lg bg-blue-600 text-white font-medium hover:bg-blue-700 transition"
                 >
-                  🔗 Abrir boleto
+                  📄 Baixar boleto
                 </a>
               )}
             </div>
           )}
 
-          {/* Botões adicionais */}
+          {/* Botões de ação */}
           {message.buttons && message.buttons.length > 0 && (
             <div className="flex flex-wrap gap-2 mt-2">
               {message.buttons.map((btn, i) => (
