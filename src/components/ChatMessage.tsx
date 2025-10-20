@@ -31,10 +31,13 @@ export const ChatMessage = ({ message, isLoading, onAction }: ChatMessageProps) 
         setDisplayedText(message.content.slice(0, i + 1));
         i++;
         if (i >= message.content.length) clearInterval(interval);
-      }, 15); // velocidade da digitação (ms)
+      }, 15);
       return () => clearInterval(interval);
     }
   }, [message.content, message.role, isLoading]);
+
+  // 🔗 Extrai o primeiro link HTTP se existir
+  const boletoLink = message.content?.match(/https?:\/\/\S+/)?.[0];
 
   return (
     <motion.div
@@ -75,7 +78,7 @@ export const ChatMessage = ({ message, isLoading, onAction }: ChatMessageProps) 
             </div>
           )}
 
-          {/* Efeito de carregamento da IA */}
+          {/* Conteúdo */}
           {message.role === "assistant" && isLoading ? (
             <div className="flex gap-1">
               <span className="w-2 h-2 bg-gray-300 rounded-full animate-bounce [animation-delay:-0.3s]" />
@@ -83,7 +86,6 @@ export const ChatMessage = ({ message, isLoading, onAction }: ChatMessageProps) 
               <span className="w-2 h-2 bg-gray-300 rounded-full animate-bounce" />
             </div>
           ) : message.type === "pedidos" && message.pedidos ? (
-            /* === MENSAGENS DE PEDIDOS === */
             <div className="space-y-3">
               <p>{message.content}</p>
               {message.pedidos.map((p) => (
@@ -120,17 +122,13 @@ export const ChatMessage = ({ message, isLoading, onAction }: ChatMessageProps) 
               ))}
             </div>
           ) : message.type === "itens" && message.table ? (
-            /* === TABELAS DE ITENS === */
             <div className="overflow-x-auto">
               <p className="mb-2 text-gray-200">{message.content}</p>
               <table className="table-auto border-collapse border border-gray-700 w-full text-sm text-gray-300">
                 <thead className="bg-[#2a2a2d]">
                   <tr>
                     {message.table.headers.map((h, i) => (
-                      <th
-                        key={i}
-                        className="border border-gray-700 px-2 py-1 text-left font-medium text-gray-100"
-                      >
+                      <th key={i} className="border border-gray-700 px-2 py-1 text-left font-medium text-gray-100">
                         {h}
                       </th>
                     ))}
@@ -148,10 +146,7 @@ export const ChatMessage = ({ message, isLoading, onAction }: ChatMessageProps) 
                   ))}
                   {message.table.total && (
                     <tr className="bg-[#18181a] font-semibold text-gray-100">
-                      <td
-                        colSpan={message.table.headers.length - 1}
-                        className="border border-gray-700 px-2 py-1"
-                      >
+                      <td colSpan={message.table.headers.length - 1} className="border border-gray-700 px-2 py-1">
                         Total
                       </td>
                       <td className="border border-gray-700 px-2 py-1">
@@ -163,11 +158,23 @@ export const ChatMessage = ({ message, isLoading, onAction }: ChatMessageProps) 
               </table>
             </div>
           ) : (
-            /* === MENSAGENS DE TEXTO COM EFEITO DE DIGITAÇÃO === */
-            <div className="prose prose-invert prose-sm max-w-none text-gray-100 leading-relaxed">
+            // 🔹 Mensagem normal (texto e Markdown)
+            <div className="prose prose-invert prose-sm max-w-none text-gray-100 leading-relaxed space-y-2">
               <ReactMarkdown remarkPlugins={[remarkGfm]}>
                 {message.role === "assistant" ? displayedText : message.content}
               </ReactMarkdown>
+
+              {/* 🔗 Botão automático de boleto */}
+              {boletoLink && (
+                <a
+                  href={boletoLink}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-block mt-2 px-4 py-2 rounded-lg bg-blue-600 text-white font-medium hover:bg-blue-700 transition"
+                >
+                  🔗 Abrir boleto
+                </a>
+              )}
             </div>
           )}
 
@@ -197,5 +204,3 @@ export const ChatMessage = ({ message, isLoading, onAction }: ChatMessageProps) 
     </motion.div>
   );
 };
-
-
