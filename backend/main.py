@@ -220,17 +220,38 @@ async def mensagem(msg: Message):
             titulo = parametros.get("titulo_id")
             parcela = parametros.get("parcela_id")
             if not titulo or not parcela:
-                return {"text": "⚠️ Informe o ID do título e da parcela. Exemplo: enviar boleto 123 1", "buttons": menu_inicial}
+                return {
+                    "text": "⚠️ Informe o ID do título e da parcela. Exemplo: enviar boleto 123 1",
+                    "buttons": menu_inicial
+                }
+
             msg_envio = enviar_boleto_email(titulo, parcela)
-            return {"text": msg_envio, "buttons": menu_inicial}
+            return {
+                "text": msg_envio,
+                "buttons": menu_inicial
+            }
 
         if acao == "link_boleto":
             titulo = parametros.get("titulo_id")
             parcela = parametros.get("parcela_id")
             if not titulo or not parcela:
-                return {"text": "⚠️ Informe o ID do título e da parcela. Exemplo: link boleto 123 1", "buttons": menu_inicial}
+                return {
+                    "text": "⚠️ Informe o ID do título e da parcela. Exemplo: link boleto 123 1",
+                    "buttons": menu_inicial
+                }
+
             msg_link = gerar_link_boleto(titulo, parcela)
-            return {"text": msg_link, "buttons": menu_inicial}
+
+            # Se for um link válido, formata para markdown
+            if msg_link.startswith("http"):
+                msg_formatado = f"🔗 **Segunda via disponível:** [Clique aqui para abrir o boleto]({msg_link})"
+            else:
+                msg_formatado = msg_link
+
+            return {
+                "text": msg_formatado,
+                "buttons": menu_inicial
+            }
 
         return {"text": f"Ação {acao} reconhecida, mas não implementada.", "buttons": menu_inicial}
 
