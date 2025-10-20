@@ -5,6 +5,7 @@ import os
 import json
 import logging
 import base64
+import re
 
 from sienge.sienge_pedidos import (
     listar_pedidos_pendentes,
@@ -17,7 +18,12 @@ from sienge.sienge_pedidos import (
     buscar_centro_custo,
     buscar_fornecedor,
 )
-from sienge.sienge_boletos import gerar_link_boleto, enviar_boleto_email  # 🧾 integração nova
+from sienge.sienge_boletos import (
+    gerar_link_boleto,
+    enviar_boleto_email,
+    listar_boletos_por_cliente,
+)
+from sienge.sienge_clientes import buscar_cliente_por_cpf
 
 logging.basicConfig(level=logging.INFO)
 
@@ -38,7 +44,7 @@ class Message(BaseModel):
     text: str
 
 
-# ===== Util =====
+# ===== Utils =====
 def money(v):
     try:
         return f"R$ {float(v):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
@@ -110,18 +116,11 @@ def entender_intencao(texto: str):
         if len(nums) >= 2:
             return {"acao": "link_boleto", "parametros": {"titulo_id": nums[0], "parcela_id": nums[1]}}
 
+    # CPF (busca boletos por CPF)
+    if "cpf" in t:
+        return {"acao": "buscar_boletos_cpf", "parametros": {"texto": t}}
+
     return {"acao": None}
-
-
-# ===== Avisos =====
-def obter_aviso_pedido(pedido_id: int):
-    pedido = buscar_pedido_por_id(pedido_id)
-    if not pedido:
-        return None
-    avisos = pedido.get("alerts", []) or []
-    if not avisos:
-        return None
-    return "\n".join([f"- {a.get('message')}" for a in avisos])
 
 
 # ===== Endpoint principal =====
@@ -154,13 +153,11 @@ async def mensagem(msg: Message):
                 return {"text": "📭 Nenhum pedido pendente de autorização encontrado.", "buttons": menu_inicial}
 
             linhas = []
-            botoes = []
             for p in pedidos:
                 pid = p.get("id")
                 total = money(p.get("totalAmount"))
                 fornecedor = "Fornecedor não informado"
                 linhas.append(f"• Pedido {pid} — {fornecedor} — {total}")
-                botoes.append({"label": f"Pedido {pid}", "action": "itens_pedido", "pedido_id": pid})
 
             return {"text": "📋 Pedidos pendentes de autorização:\n\n" + "\n".join(linhas),
                     "buttons": menu_inicial}
@@ -216,6 +213,38 @@ async def mensagem(msg: Message):
             return {"text": f"📄 PDF do pedido {pid} gerado com sucesso!", "pdf_base64": pdf_b64}
 
         # === BOLETOS ===
+        if acao == "buscar_boletos_cpf":
+            texto = parametros.get("texto", "")
+            cpf_match = re.search(r'\d{11}|\d{3}\.\d{3}\.\d{3}-\d{2}', texto)
+            if not cpf_match:
+                return {"text": "🧾 Informe um CPF válido (ex: 123.456.789-00)."}
+
+            cpf = re.sub(r'\D', '', cpf_match.group(0))
+            cliente = buscar_cliente_por_cpf(cpf)
+            if not cliente:
+                return {"text": "❌ Nenhum cliente encontrado com esse CPF."}
+
+            nome = cliente.get("name") or cliente.get("fullName", "Cliente sem nome")
+            cid = cliente.get("id")
+
+            boletos = listar_boletos_por_cliente(cid)
+            if not boletos:
+                return {"text": f"🟢 Nenhum boleto em aberto para {nome}."}
+
+            linhas = []
+            botoes = []
+            for b in boletos:
+                bid = b.get("id")
+                valor = money(b.get("amount"))
+                venc = b.get("dueDate")
+                linhas.append(f"💳 **Título {bid}** — {valor} — Venc.: {venc}")
+                botoes.append({"label": f"Segunda via {bid}", "action": "link_boleto", "pedido_id": bid})
+
+            return {
+                "text": f"📋 Boletos em aberto para **{nome}**:\n\n" + "\n".join(linhas),
+                "buttons": botoes or menu_inicial
+            }
+
         if acao == "enviar_boleto":
             titulo = parametros.get("titulo_id")
             parcela = parametros.get("parcela_id")
@@ -226,10 +255,7 @@ async def mensagem(msg: Message):
                 }
 
             msg_envio = enviar_boleto_email(titulo, parcela)
-            return {
-                "text": msg_envio,
-                "buttons": menu_inicial
-            }
+            return {"text": msg_envio, "buttons": menu_inicial}
 
         if acao == "link_boleto":
             titulo = parametros.get("titulo_id")
@@ -241,17 +267,7 @@ async def mensagem(msg: Message):
                 }
 
             msg_link = gerar_link_boleto(titulo, parcela)
-
-            # Se for um link válido, formata para markdown
-            if msg_link.startswith("http"):
-                msg_formatado = f"🔗 **Segunda via disponível:** [Clique aqui para abrir o boleto]({msg_link})"
-            else:
-                msg_formatado = msg_link
-
-            return {
-                "text": msg_formatado,
-                "buttons": menu_inicial
-            }
+            return {"text": msg_link, "buttons": menu_inicial}
 
         return {"text": f"Ação {acao} reconhecida, mas não implementada.", "buttons": menu_inicial}
 
