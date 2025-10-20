@@ -21,7 +21,7 @@ from sienge.sienge_pedidos import (
 from sienge.sienge_boletos import (
     gerar_link_boleto,
     enviar_boleto_email,
-    listar_boletos_por_cliente,
+    buscar_boletos_por_cpf,  # ✅ Nova função inteligente
 )
 from sienge.sienge_clientes import buscar_cliente_por_cpf
 
@@ -220,30 +220,8 @@ async def mensagem(msg: Message):
                 return {"text": "🧾 Informe um CPF válido (ex: 123.456.789-00)."}
 
             cpf = re.sub(r'\D', '', cpf_match.group(0))
-            cliente = buscar_cliente_por_cpf(cpf)
-            if not cliente:
-                return {"text": "❌ Nenhum cliente encontrado com esse CPF."}
-
-            nome = cliente.get("name") or cliente.get("fullName", "Cliente sem nome")
-            cid = cliente.get("id")
-
-            boletos = listar_boletos_por_cliente(cid)
-            if not boletos:
-                return {"text": f"🟢 Nenhum boleto em aberto para {nome}."}
-
-            linhas = []
-            botoes = []
-            for b in boletos:
-                bid = b.get("id")
-                valor = money(b.get("amount"))
-                venc = b.get("dueDate")
-                linhas.append(f"💳 **Título {bid}** — {valor} — Venc.: {venc}")
-                botoes.append({"label": f"Segunda via {bid}", "action": "link_boleto", "pedido_id": bid})
-
-            return {
-                "text": f"📋 Boletos em aberto para **{nome}**:\n\n" + "\n".join(linhas),
-                "buttons": botoes or menu_inicial
-            }
+            msg_boletos = buscar_boletos_por_cpf(cpf)
+            return {"text": msg_boletos, "buttons": menu_inicial}
 
         if acao == "enviar_boleto":
             titulo = parametros.get("titulo_id")
