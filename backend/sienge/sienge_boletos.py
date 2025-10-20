@@ -1,16 +1,22 @@
 import requests
 import logging
-import os
 import json
+from base64 import b64encode
 
-# 🔐 Variáveis de ambiente (substitua pelas suas se preferir fixas)
-BASE_URL = "https://api.sienge.com.br/cctcontrol/public/api/v1"
-SIENGE_USER = os.getenv("SIENGE_USER")
-SIENGE_PASSWORD = os.getenv("SIENGE_PASSWORD")
+# === CONFIGURAÇÕES ===
+subdominio = "cctcontrol"
+usuario = "cctcontrol-api"
+senha = "9SQ2MaNrFOeZOOuOAqeSRy7bYWYDDf85"
+
+BASE_URL = f"https://api.sienge.com.br/{subdominio}/public/api/v1"
+
+# === Auth básico ===
+_token = b64encode(f"{usuario}:{senha}".encode()).decode()
 
 json_headers = {
+    "Authorization": f"Basic {_token}",
+    "accept": "application/json",
     "Content-Type": "application/json",
-    "Accept": "application/json",
 }
 
 # ==============================================================
@@ -33,7 +39,8 @@ def gerar_link_boleto(titulo_id: int, parcela_id: int) -> str:
         try:
             data = r.json()
 
-            # O retorno vem em formato { "results": [ { "urlReport": "...", "digitableNumber": "..." } ] }
+            # O retorno esperado é algo como:
+            # {"results":[{"urlReport":"https://...","digitableNumber":"1049..."}]}
             results = data.get("results") or data.get("data") or []
             if results and isinstance(results, list):
                 result = results[0]
@@ -41,14 +48,18 @@ def gerar_link_boleto(titulo_id: int, parcela_id: int) -> str:
                 linha_digitavel = result.get("digitableNumber")
 
                 if link:
-                    return f"{link} (Linha digitável: {linha_digitavel})"
+                    return (
+                        f"📄 **Segunda via gerada com sucesso!**\n\n"
+                        f"🔗 [Clique aqui para abrir o boleto]({link})\n"
+                        f"💳 **Linha digitável:** `{linha_digitavel}`"
+                    )
 
-            # fallback
-            return json.dumps(data, ensure_ascii=False)
+            # fallback se o formato não for o esperado
+            return f"⚠️ Retorno inesperado da API:\n{json.dumps(data, indent=2, ensure_ascii=False)}"
 
         except Exception as e:
             logging.exception("Erro ao processar retorno JSON:")
-            return f"Erro ao processar retorno da API: {e}"
+            return f"❌ Erro ao processar retorno da API: {e}"
 
     logging.warning("Falha gerar link boleto (%s): %s", r.status_code, r.text)
     return f"❌ Erro ao gerar boleto ({r.status_code}). {r.text}"
