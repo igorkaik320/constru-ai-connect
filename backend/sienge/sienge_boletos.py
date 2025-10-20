@@ -104,7 +104,7 @@ def gerar_link_boleto(titulo_id: int, parcela_id: int) -> str:
 # ==============================================================
 
 def buscar_boletos_por_cpf(cpf: str):
-    """Busca boletos em aberto para um cliente a partir do CPF"""
+    """Busca apenas boletos em aberto com boleto gerado para um cliente"""
     cliente = buscar_cliente_por_cpf(cpf)
     if not cliente:
         return {"erro": "❌ Nenhum cliente encontrado com esse CPF."}
@@ -119,39 +119,37 @@ def buscar_boletos_por_cpf(cpf: str):
 
     lista = []
     for b in boletos:
-        # Corrigido: campo certo é receivableBillId
         titulo_id = b.get("id") or b.get("receivableBillId")
-        valor = b.get("amount") or b.get("receivableBillValue")
+        valor = b.get("amount") or b.get("receivableBillValue") or 0.0
         desc = b.get("description") or b.get("documentNumber") or b.get("note") or "-"
         emissao = b.get("issueDate")
+        quitado = b.get("payOffDate")
 
-        if not titulo_id:
-            logging.warning("⚠️ Título sem ID: %s", json.dumps(b))
+        # 🚫 Ignora títulos quitados
+        if quitado:
             continue
 
         parcelas = listar_parcelas(titulo_id)
-
         if not parcelas:
-            lista.append({
-                "titulo_id": titulo_id,
-                "parcela_id": 1,
-                "descricao": desc,
-                "valor": valor or 0.0,
-                "vencimento": emissao,
-            })
-            continue
+            continue  # ignora títulos sem parcelas
 
+        # 🔍 Apenas parcelas em aberto com boleto
         for p in parcelas:
+            if p.get("settlementDate") or p.get("canceled"):
+                continue
+            if not p.get("hasPaymentSlip") and not p.get("paymentSlipId"):
+                continue
+
             lista.append({
                 "titulo_id": titulo_id,
                 "parcela_id": p.get("id"),
                 "descricao": desc,
-                "valor": p.get("amount") or valor or 0.0,
+                "valor": p.get("amount") or valor,
                 "vencimento": p.get("dueDate") or p.get("expirationDate") or emissao,
             })
 
     if not lista:
-        return {"erro": f"📭 Nenhuma parcela em aberto para {nome}."}
+        return {"erro": f"📭 Nenhum boleto disponível para segunda via de {nome}."}
 
     return {
         "nome": nome,
