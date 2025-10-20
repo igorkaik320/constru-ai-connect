@@ -30,9 +30,7 @@ logging.basicConfig(level=logging.INFO)
 # ==========================
 
 def gerar_link_boleto(titulo_id: int, parcela_id: int) -> str:
-    """
-    Gera o link para o boleto de segunda via (GET /payment-slip-notification)
-    """
+    """Gera o link para boleto de segunda via."""
     url = f"{BASE_URL}/payment-slip-notification"
     params = {
         "billReceivableId": titulo_id,
@@ -41,31 +39,23 @@ def gerar_link_boleto(titulo_id: int, parcela_id: int) -> str:
 
     logging.info("GET %s -> params=%s", url, params)
     r = requests.get(url, headers=json_headers, params=params, timeout=30)
-    logging.info("GET %s -> %s", url, r.status_code)
+    logging.info("%s -> %s", url, r.status_code)
 
     if r.status_code == 200:
         try:
             data = r.json()
-            link = data.get("url")
-            linha_digitavel = data.get("digitableLine")
-
+            # ⚙️ A API retorna algo como {"link": "https://...", "numeroDigitavel": "..."}
+            link = data.get("link")
             if link:
-                return (
-                    "💳 **Boleto gerado com sucesso!**\n\n"
-                    f"🔗 [Clique aqui para abrir o boleto]({link})\n"
-                    f"🏦 Linha digitável: `{linha_digitavel or '-'}`\n\n"
-                    "⚠️ O link expira em **5 minutos**."
-                )
+                return link  # 🔗 retorna só o link puro para o backend
             else:
-                return "⚠️ Boleto gerado, mas o link não foi retornado pela API."
+                return json.dumps(data, ensure_ascii=False)
+        except Exception:
+            return r.text
 
-        except Exception as e:
-            logging.warning("Erro ao processar resposta do boleto: %s", e)
-            return f"❌ Erro ao processar o retorno do boleto: {e}"
+    logging.warning("Falha gerar link boleto (%s): %s", r.status_code, r.text)
+    return f"❌ Erro ao gerar boleto ({r.status_code}). {r.text}"
 
-    else:
-        logging.warning("Falha gerar link boleto (%s): %s", r.status_code, r.text)
-        return f"❌ Erro ao gerar boleto ({r.status_code}): {r.text}"
 
 
 def enviar_boleto_email(titulo_id: int, parcela_id: int) -> str:
