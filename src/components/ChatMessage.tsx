@@ -1,3 +1,19 @@
+https://cctcontrol.sienge.com.br/sienge/visualizar-relatorio?arquivo=172177487654335291&formato=pdf
+```)  
+para um **link de download forçado**, alterando a forma como o React o renderiza.
+
+---
+
+### ✅ Aqui está o `ChatMessage.tsx` corrigido
+
+Ele faz:
+- Pega o mesmo link do texto;
+- Substitui `visualizar-relatorio` por `download-relatorio` (que é o endpoint que baixa o arquivo direto);
+- Remove o link do texto e mostra apenas o botão “📄 Baixar boleto”.
+
+---
+
+```tsx
 import { cn } from "@/lib/utils";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -36,15 +52,17 @@ export const ChatMessage = ({ message, isLoading, onAction }: ChatMessageProps) 
     }
   }, [message.content, message.role, isLoading]);
 
-  // 🔗 Captura link correto (relatório PDF do boleto)
+  // 🔗 Captura o link do boleto
   const linkRegex = /(https?:\/\/[^\s]+)/g;
   const links = message.content?.match(linkRegex);
-  const boletoLink =
-    links && links.length > 0
-      ? links.find((url) => url.includes("visualizar-relatorio") && url.includes("formato=pdf"))
-      : null;
+  let boletoLink = links ? links.find((url) => url.includes("visualizar-relatorio")) : null;
 
-  // 🧹 Remove o link do texto original
+  // 🔄 Se tiver link, converte para o formato de download
+  if (boletoLink) {
+    boletoLink = boletoLink.replace("visualizar-relatorio", "download-relatorio");
+  }
+
+  // ✂️ Remove o link do texto original e ajusta a frase
   const textoLimpo = message.content
     ?.replace(linkRegex, "")
     .replace("Clique aqui para abrir o boleto", "Clique no botão abaixo para baixar o boleto")
@@ -77,46 +95,34 @@ export const ChatMessage = ({ message, isLoading, onAction }: ChatMessageProps) 
               : "bg-[#1e1e20] text-gray-100 rounded-bl-none border border-gray-800"
           )}
         >
-          {/* Cabeçalhos */}
           {!isUser && (
-            <div className="text-xs font-semibold text-purple-400 mb-1">
-              constru.ia
-            </div>
+            <div className="text-xs font-semibold text-purple-400 mb-1">constru.ia</div>
           )}
           {isUser && (
-            <div className="text-xs font-semibold text-blue-300 mb-1 text-right">
-              Você
-            </div>
+            <div className="text-xs font-semibold text-blue-300 mb-1 text-right">Você</div>
           )}
 
-          {/* Conteúdo principal (sem link visível) */}
-          {message.role === "assistant" && isLoading ? (
-            <div className="flex gap-1">
-              <span className="w-2 h-2 bg-gray-300 rounded-full animate-bounce [animation-delay:-0.3s]" />
-              <span className="w-2 h-2 bg-gray-300 rounded-full animate-bounce [animation-delay:-0.15s]" />
-              <span className="w-2 h-2 bg-gray-300 rounded-full animate-bounce" />
-            </div>
-          ) : (
-            <div className="prose prose-invert prose-sm max-w-none text-gray-100 leading-relaxed space-y-2">
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                {textoLimpo}
-              </ReactMarkdown>
+          {/* Texto formatado */}
+          <div className="prose prose-invert prose-sm max-w-none text-gray-100 leading-relaxed space-y-2">
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>
+              {message.role === "assistant" ? displayedText.replace(linkRegex, "") : textoLimpo}
+            </ReactMarkdown>
 
-              {/* ✅ Botão funcional de baixar boleto */}
-              {boletoLink && (
-                <a
-                  href={boletoLink}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-2 mt-3 px-4 py-2 rounded-lg bg-blue-600 text-white font-medium hover:bg-blue-700 transition"
-                >
-                  📄 Baixar boleto
-                </a>
-              )}
-            </div>
-          )}
+            {/* ✅ Botão que baixa o boleto diretamente */}
+            {boletoLink && (
+              <a
+                href={boletoLink}
+                target="_blank"
+                rel="noopener noreferrer"
+                download
+                className="inline-flex items-center gap-2 mt-3 px-4 py-2 rounded-lg bg-blue-600 text-white font-medium hover:bg-blue-700 transition"
+              >
+                📄 Baixar boleto
+              </a>
+            )}
+          </div>
 
-          {/* Botões de ação */}
+          {/* Botões adicionais */}
           {message.buttons && message.buttons.length > 0 && (
             <div className="flex flex-wrap gap-2 mt-2">
               {message.buttons.map((btn, i) => (
