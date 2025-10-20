@@ -20,8 +20,7 @@ json_headers = {
 }
 
 # ==============================================================
-# 🧾 Funções de integração de boletos
-# ==============================================================
+
 
 def gerar_link_boleto(titulo_id: int, parcela_id: int) -> str:
     """Gera link de segunda via do boleto no Sienge"""
@@ -38,9 +37,6 @@ def gerar_link_boleto(titulo_id: int, parcela_id: int) -> str:
     if r.status_code == 200:
         try:
             data = r.json()
-
-            # O retorno esperado é algo como:
-            # {"results":[{"urlReport":"https://...","digitableNumber":"1049..."}]}
             results = data.get("results") or data.get("data") or []
             if results and isinstance(results, list):
                 result = results[0]
@@ -54,7 +50,6 @@ def gerar_link_boleto(titulo_id: int, parcela_id: int) -> str:
                         f"💳 **Linha digitável:** `{linha_digitavel}`"
                     )
 
-            # fallback se o formato não for o esperado
             return f"⚠️ Retorno inesperado da API:\n{json.dumps(data, indent=2, ensure_ascii=False)}"
 
         except Exception as e:
@@ -82,3 +77,18 @@ def enviar_boleto_email(titulo_id: int, parcela_id: int) -> str:
     else:
         logging.warning("Falha ao enviar boleto (%s): %s", r.status_code, r.text)
         return f"❌ Erro ao enviar boleto ({r.status_code}). {r.text}"
+
+
+def listar_boletos_por_cliente(cliente_id: int):
+    """Lista boletos (títulos) do cliente"""
+    url = f"{BASE_URL}/accounts-receivable/receivable-bills?customerId={cliente_id}"
+    r = requests.get(url, headers=json_headers, timeout=30)
+    logging.info("GET %s -> %s", url, r.status_code)
+
+    if r.status_code != 200:
+        return []
+
+    data = r.json()
+    boletos = data.get("results") or data
+    abertos = [b for b in boletos if b.get("status") == "OPEN"]
+    return abertos
