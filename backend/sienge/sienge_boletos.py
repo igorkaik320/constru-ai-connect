@@ -22,20 +22,19 @@ json_headers = {
 
 logging.basicConfig(level=logging.INFO)
 
-
 # ==========================================================
 #  FUNÇÕES PARA BOLETOS (segunda via e link temporário)
 # ==========================================================
 
-def gerar_link_boleto(bill_receivable_id: int, installment_number: int) -> Optional[Dict[str, Any]]:
+def gerar_link_boleto(bill_receivable_id: int, installment_id: int) -> Optional[Dict[str, Any]]:
     """
-    Gera o link temporário e linha digitável de um boleto via GET /payment-slip-notification.
-    Parâmetros obrigatórios: billReceivableId e installmentNumber.
+    Gera o link temporário e linha digitável do boleto via GET /payment-slip-notification.
+    Parâmetros obrigatórios: billReceivableId e installmentId.
     """
     url = f"{BASE_URL}/payment-slip-notification"
     params = {
         "billReceivableId": bill_receivable_id,
-        "installmentNumber": installment_number
+        "installmentId": installment_id
     }
 
     try:
@@ -75,14 +74,15 @@ def gerar_link_boleto(bill_receivable_id: int, installment_number: int) -> Optio
         }
 
 
-def enviar_boleto_email(bill_receivable_id: int, installment_number: int) -> Dict[str, Any]:
+def enviar_boleto_email(bill_receivable_id: int, installment_id: int) -> Dict[str, Any]:
     """
     Envia o boleto de segunda via por e-mail ao cliente (POST /payment-slip-notification).
+    Parâmetros obrigatórios: billReceivableId e installmentId.
     """
     url = f"{BASE_URL}/payment-slip-notification"
     body = {
         "billReceivableId": bill_receivable_id,
-        "installmentNumber": installment_number
+        "installmentId": installment_id
     }
 
     try:
