@@ -5,7 +5,6 @@ import { ChatHeader } from "@/components/ChatHeader";
 import { ConversationsSidebar } from "@/components/ConversationsSidebar";
 import { SidebarProvider } from "@/components/ui/sidebar";
 import { Bot } from "lucide-react";
-import ReactMarkdown from "react-markdown";
 
 interface Message {
   role: "user" | "assistant";
@@ -122,21 +121,12 @@ const Index = () => {
             ) : (
               messages.map((m, i) => (
                 <div key={i} className="space-y-2">
-                  {/* ✅ Balão principal da mensagem */}
+                  {/* ✅ Balão da mensagem */}
                   <ChatMessage
                     message={m}
                     isLoading={isLoading && i === messages.length - 1}
                     onAction={handleAction}
                   />
-
-                  {/* ✅ Exibe Markdown apenas para mensagens que contêm links (boletos etc) */}
-                  {m.role === "assistant" &&
-                    m.content &&
-                    (m.content.includes("http") || m.content.includes("Clique aqui")) && (
-                      <div className="prose prose-invert max-w-none mt-2">
-                        <ReactMarkdown>{m.content}</ReactMarkdown>
-                      </div>
-                    )}
 
                   {/* ✅ Botão de download do PDF */}
                   {m.pdf_base64 && (
