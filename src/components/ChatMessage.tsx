@@ -35,10 +35,15 @@ export const ChatMessage = ({ message, isLoading, onAction }: ChatMessageProps) 
     }
   }, [message.content, message.role, isLoading]);
 
-  // Extrai linha digitável
+  // 🔹 Extrai o link do boleto e a linha digitável
+  const linkBoleto =
+    message.content.match(/\(https?:\/\/[^\s)]+\)/)?.[0]?.replace(/[()]/g, "") || null;
   const linhaDigitavel = message.content.includes("Linha digitável:")
     ? message.content.split("Linha digitável:")[1].trim()
     : null;
+
+  // 🔹 Verifica se é mensagem de boleto
+  const isBoleto = message.content.includes("Clique aqui para abrir o boleto");
 
   return (
     <motion.div
@@ -51,12 +56,14 @@ export const ChatMessage = ({ message, isLoading, onAction }: ChatMessageProps) 
       )}
     >
       <div className="max-w-3xl flex gap-4">
+        {/* Avatar IA */}
         {!isUser && (
           <div className="flex-shrink-0 w-9 h-9 rounded-full flex items-center justify-center bg-gradient-to-br from-purple-500 to-blue-500 text-white shadow-lg">
             <Bot className="w-5 h-5" />
           </div>
         )}
 
+        {/* Caixa principal */}
         <div
           className={cn(
             "flex-1 space-y-2 p-4 rounded-2xl text-sm leading-relaxed shadow-sm transition-all",
@@ -72,6 +79,7 @@ export const ChatMessage = ({ message, isLoading, onAction }: ChatMessageProps) 
             <div className="text-xs font-semibold text-blue-300 mb-1 text-right">Você</div>
           )}
 
+          {/* ✨ Animação de digitação */}
           {message.role === "assistant" && isLoading ? (
             <div className="flex gap-1">
               <span className="w-2 h-2 bg-gray-300 rounded-full animate-bounce [animation-delay:-0.3s]" />
@@ -80,41 +88,42 @@ export const ChatMessage = ({ message, isLoading, onAction }: ChatMessageProps) 
             </div>
           ) : (
             <>
-              {/* Texto principal com markdown */}
-              <div className="prose prose-invert prose-sm max-w-none text-gray-100 leading-relaxed">
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                  {message.role === "assistant" ? displayedText : message.content}
-                </ReactMarkdown>
-              </div>
-
-              {/* Caixa visual para destacar o link e linha digitável */}
-              {message.content.includes("Clique aqui para abrir o boleto") && (
-                <div className="mt-3 p-3 bg-[#151518] rounded-lg border border-gray-700">
-                  <p className="flex items-center gap-2 text-sm text-gray-300">
+              {/* Se for boleto, exibe apenas o bloco formatado */}
+              {isBoleto ? (
+                <div className="p-4 bg-[#141416] rounded-xl border border-gray-700 space-y-3">
+                  <p className="flex items-center gap-2 text-sm text-gray-200">
                     <LinkIcon className="w-4 h-4 text-blue-400" />
-                    <span>
-                      <strong className="text-blue-400">Clique aqui</strong> para abrir o boleto:
-                    </span>
+                    <strong className="text-blue-400">Segunda via gerada com sucesso!</strong>
                   </p>
 
-                  {/* Link original (funcional) */}
-                  <div className="mt-2 text-blue-400 underline break-all">
-                    <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                      {message.content.match(/\(https?:\/\/[^\s)]+\)/)?.[0]?.replace(/[()]/g, "") || ""}
-                    </ReactMarkdown>
-                  </div>
+                  {linkBoleto && (
+                    <a
+                      href={linkBoleto}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="block text-blue-400 underline text-sm break-all hover:text-blue-300"
+                    >
+                      🔗 Clique aqui para abrir o boleto
+                    </a>
+                  )}
 
-                  {/* Linha digitável */}
                   {linhaDigitavel && (
-                    <div className="mt-3 text-xs text-gray-400 font-mono bg-[#0f0f10] p-2 rounded">
-                      {linhaDigitavel}
+                    <div className="text-xs text-gray-400 font-mono bg-[#0f0f10] p-2 rounded border border-gray-800">
+                      <span className="text-gray-500">Linha digitável:</span> {linhaDigitavel}
                     </div>
                   )}
+                </div>
+              ) : (
+                <div className="prose prose-invert prose-sm max-w-none text-gray-100 leading-relaxed">
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                    {message.role === "assistant" ? displayedText : message.content}
+                  </ReactMarkdown>
                 </div>
               )}
             </>
           )}
 
+          {/* 🔹 Botões de ação */}
           {message.buttons && message.buttons.length > 0 && (
             <div className="flex flex-wrap gap-2 mt-3">
               {message.buttons.map((btn, i) => (
@@ -130,6 +139,7 @@ export const ChatMessage = ({ message, isLoading, onAction }: ChatMessageProps) 
           )}
         </div>
 
+        {/* Avatar Usuário */}
         {isUser && (
           <div className="flex-shrink-0 w-9 h-9 rounded-full flex items-center justify-center bg-blue-500/20 text-blue-400 shadow-md">
             <User className="w-5 h-5" />
