@@ -20,144 +20,117 @@ json_headers = {
 }
 
 # ==============================================================
-# 🧾 FUNÇÕES DE BOLETO
+# 🔍 BUSCAR CLIENTE POR CPF
 # ==============================================================
 
+def buscar_cliente_por_cpf(cpf: str):
+    url = f"{BASE_URL}/customers?cpf={cpf}"
+    r = requests.get(url, headers=json_headers, timeout=30)
+    logging.info(f"GET {url} -> {r.status_code}")
+    if r.status_code != 200:
+        return None
+
+    data = r.json()
+    results = data.get("results") or data
+    if isinstance(results, list) and len(results) > 0:
+        return results[0]
+    return None
+
+
+# ==============================================================
+# 🧾 BOLETOS
+# ==============================================================
+
+def listar_boletos_por_cliente(cliente_id: int):
+    """Busca boletos em aberto por cliente"""
+    url = f"{BASE_URL}/accounts-receivable/receivable-bills?customerId={cliente_id}"
+    r = requests.get(url, headers=json_headers, timeout=30)
+    logging.info(f"GET {url} -> {r.status_code}")
+    if r.status_code != 200:
+        return []
+
+    data = r.json()
+    boletos = data.get("results") or []
+    return boletos
+
+
+def listar_parcelas(titulo_id: int):
+    """Busca as parcelas de um título (necessário para gerar boleto)"""
+    url = f"{BASE_URL}/accounts-receivable/receivable-bills/{titulo_id}/installments"
+    r = requests.get(url, headers=json_headers, timeout=30)
+    logging.info(f"GET {url} -> {r.status_code}")
+    if r.status_code != 200:
+        return []
+    return r.json().get("results") or []
+
+
 def gerar_link_boleto(titulo_id: int, parcela_id: int) -> str:
+    """Gera link de segunda via do boleto"""
     url = f"{BASE_URL}/payment-slip-notification"
     params = {"billReceivableId": titulo_id, "installmentId": parcela_id}
 
-    logging.info("GET %s -> params=%s", url, params)
+    logging.info(f"GET {url} -> params={params}")
     r = requests.get(url, headers=json_headers, params=params, timeout=30)
-    logging.info("%s -> %s", url, r.status_code)
+    logging.info(f"{url} -> {r.status_code}")
 
     if r.status_code == 200:
-        try:
-            data = r.json()
-            results = data.get("results") or data.get("data") or []
-            if results and isinstance(results, list):
-                result = results[0]
-                link = result.get("urlReport")
-                linha_digitavel = result.get("digitableNumber")
-
-                if link:
-                    return (
-                        f"📄 **Segunda via gerada com sucesso!**\n\n"
-                        f"🔗 [Clique aqui para abrir o boleto]({link})\n"
-                        f"💳 **Linha digitável:** `{linha_digitavel}`"
-                    )
-            return f"⚠️ Retorno inesperado da API:\n{json.dumps(data, indent=2, ensure_ascii=False)}"
-        except Exception as e:
-            logging.exception("Erro ao processar retorno JSON:")
-            return f"❌ Erro ao processar retorno da API: {e}"
-
-    logging.warning("Falha gerar link boleto (%s): %s", r.status_code, r.text)
-    return f"❌ Erro ao gerar boleto ({r.status_code}). {r.text}"
-
-
-def enviar_boleto_email(titulo_id: int, parcela_id: int) -> str:
-    url = f"{BASE_URL}/payment-slip-notification"
-    body = {"billReceivableId": titulo_id, "installmentId": parcela_id}
-
-    logging.info("POST %s -> data=%s", url, body)
-    r = requests.post(url, headers=json_headers, json=body, timeout=30)
-    logging.info("%s -> %s", url, r.status_code)
-
-    if r.status_code == 200:
-        return "📧 Boleto enviado por e-mail ao cliente com sucesso!"
-    else:
-        logging.warning("Falha ao enviar boleto (%s): %s", r.status_code, r.text)
-        return f"❌ Erro ao enviar boleto ({r.status_code}). {r.text}"
+        data = r.json()
+        results = data.get("results") or data.get("data") or []
+        if results and isinstance(results, list):
+            result = results[0]
+            link = result.get("urlReport")
+            linha_digitavel = result.get("digitableNumber")
+            if link:
+                return (
+                    f"📄 **Segunda via gerada com sucesso!**\n"
+                    f"🔗 [Clique aqui para abrir o boleto]({link})\n"
+                    f"💳 **Linha digitável:** `{linha_digitavel}`"
+                )
+    return f"❌ Erro ao gerar boleto ({r.status_code})."
 
 
 # ==============================================================
-# 🔍 FUNÇÃO PRINCIPAL — Buscar boletos por CPF
+# 🔗 BUSCAR BOLETOS POR CPF COMPLETO
 # ==============================================================
 
 def buscar_boletos_por_cpf(cpf: str):
-    """Busca boletos de um cliente pelo CPF, verificando cliente, unidade e obra."""
-    from sienge.sienge_clientes import buscar_cliente_por_cpf  # ✅ import local
-
+    """Busca boletos e parcelas reais a partir do CPF"""
     cliente = buscar_cliente_por_cpf(cpf)
     if not cliente:
-        return "❌ Cliente não encontrado com esse CPF."
+        return {"erro": "❌ Nenhum cliente encontrado com esse CPF."}
 
-    cliente_id = cliente.get("id")
-    nome = cliente.get("name") or cliente.get("fullName", "Cliente")
-    logging.info(f"✅ Cliente encontrado: {nome} (ID {cliente_id})")
+    nome = cliente.get("name")
+    cid = cliente.get("id")
+    logging.info(f"✅ Cliente encontrado: {nome} (ID {cid})")
 
-    boletos = []
-
-    # 1️⃣ — Boletos diretos
-    url_cliente = f"{BASE_URL}/accounts-receivable/receivable-bills?customerId={cliente_id}"
-    r = requests.get(url_cliente, headers=json_headers, timeout=30)
-    logging.info(f"GET {url_cliente} -> {r.status_code}")
-    if r.status_code == 200:
-        boletos += r.json().get("results") or []
-
-    # 2️⃣ — Boletos por unidade (unitId)
+    boletos = listar_boletos_por_cliente(cid)
     if not boletos:
-        url_units = f"{BASE_URL}/units?customerId={cliente_id}"
-        r2 = requests.get(url_units, headers=json_headers, timeout=30)
-        logging.info(f"GET {url_units} -> {r2.status_code}")
-        if r2.status_code == 200:
-            unidades = r2.json().get("results") or []
-            for u in unidades:
-                uid = u.get("id")
-                r3 = requests.get(
-                    f"{BASE_URL}/accounts-receivable/receivable-bills?unitId={uid}",
-                    headers=json_headers,
-                    timeout=30,
-                )
-                if r3.status_code == 200:
-                    boletos += r3.json().get("results") or []
+        return {"erro": f"📭 Nenhum boleto encontrado para {nome}."}
 
-    # 3️⃣ — Boletos por obra (buildingId)
-    if not boletos:
-        url_buildings = f"{BASE_URL}/buildings?customerId={cliente_id}"
-        r4 = requests.get(url_buildings, headers=json_headers, timeout=30)
-        if r4.status_code == 200:
-            obras = r4.json().get("results") or []
-            for o in obras:
-                oid = o.get("id")
-                r5 = requests.get(
-                    f"{BASE_URL}/accounts-receivable/receivable-bills?buildingId={oid}",
-                    headers=json_headers,
-                    timeout=30,
-                )
-                if r5.status_code == 200:
-                    boletos += r5.json().get("results") or []
-
-    # 4️⃣ — Monta o texto de resposta
-    if not boletos:
-        return f"📭 Nenhum boleto encontrado para o cliente **{nome}**."
-
-    texto = [f"📋 Boletos encontrados para **{nome}:**\n"]
-
+    lista = []
     for b in boletos:
-        # Extrai campos de forma segura
-        titulo_id = b.get("id") or b.get("billReceivableId") or "-"
-        desc = (
-            b.get("description")
-            or (b.get("billReceivable") or {}).get("description")
-            or "Sem descrição"
-        )
-        amount = (
-            b.get("amount")
-            or (b.get("billReceivable") or {}).get("amount")
-            or (b.get("installment") or {}).get("amount")
-            or 0.0
-        )
-        due_date = (
-            b.get("dueDate")
-            or (b.get("installment") or {}).get("dueDate")
-            or "-"
-        )
+        titulo_id = b.get("id")
+        valor = b.get("amount") or (b.get("billReceivable") or {}).get("amount")
+        desc = b.get("description") or (b.get("billReceivable") or {}).get("description") or "-"
+        parcelas = listar_parcelas(titulo_id)
 
-        texto.append(
-            f"💳 **Título {titulo_id}** — {desc}\n"
-            f"💰 Valor: R$ {float(amount):,.2f}\n"
-            f"📅 Vencimento: {due_date}\n"
-        )
+        for p in parcelas:
+            parcela_id = p.get("id")
+            venc = p.get("dueDate")
+            valor_parcela = p.get("amount") or valor or 0.0
 
-    return "\n".join(texto)
+            lista.append({
+                "titulo_id": titulo_id,
+                "parcela_id": parcela_id,
+                "descricao": desc,
+                "valor": valor_parcela,
+                "vencimento": venc,
+            })
+
+    if not lista:
+        return {"erro": f"📭 Nenhuma parcela em aberto para {nome}."}
+
+    return {
+        "nome": nome,
+        "boletos": lista
+    }
