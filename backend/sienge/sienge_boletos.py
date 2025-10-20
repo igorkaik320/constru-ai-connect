@@ -20,11 +20,10 @@ json_headers = {
 }
 
 # ==============================================================
-# 🧾 FUNÇÕES DE INTEGRAÇÃO DE BOLETOS
+# 🧾 FUNÇÕES DE BOLETO
 # ==============================================================
 
 def gerar_link_boleto(titulo_id: int, parcela_id: int) -> str:
-    """Gera link de segunda via do boleto no Sienge."""
     url = f"{BASE_URL}/payment-slip-notification"
     params = {"billReceivableId": titulo_id, "installmentId": parcela_id}
 
@@ -57,7 +56,6 @@ def gerar_link_boleto(titulo_id: int, parcela_id: int) -> str:
 
 
 def enviar_boleto_email(titulo_id: int, parcela_id: int) -> str:
-    """Envia boleto de segunda via por e-mail ao cliente."""
     url = f"{BASE_URL}/payment-slip-notification"
     body = {"billReceivableId": titulo_id, "installmentId": parcela_id}
 
@@ -85,7 +83,7 @@ def buscar_boletos_por_cpf(cpf: str):
         return "❌ Cliente não encontrado com esse CPF."
 
     cliente_id = cliente.get("id")
-    nome = cliente.get("name")
+    nome = cliente.get("name") or cliente.get("fullName", "Cliente")
     logging.info(f"✅ Cliente encontrado: {nome} (ID {cliente_id})")
 
     boletos = []
@@ -111,7 +109,6 @@ def buscar_boletos_por_cpf(cpf: str):
                     headers=json_headers,
                     timeout=30,
                 )
-                logging.info(f"GET /receivable-bills?unitId={uid} -> {r3.status_code}")
                 if r3.status_code == 200:
                     boletos += r3.json().get("results") or []
 
@@ -119,7 +116,6 @@ def buscar_boletos_por_cpf(cpf: str):
     if not boletos:
         url_buildings = f"{BASE_URL}/buildings?customerId={cliente_id}"
         r4 = requests.get(url_buildings, headers=json_headers, timeout=30)
-        logging.info(f"GET {url_buildings} -> {r4.status_code}")
         if r4.status_code == 200:
             obras = r4.json().get("results") or []
             for o in obras:
@@ -129,7 +125,6 @@ def buscar_boletos_por_cpf(cpf: str):
                     headers=json_headers,
                     timeout=30,
                 )
-                logging.info(f"GET /receivable-bills?buildingId={oid} -> {r5.status_code}")
                 if r5.status_code == 200:
                     boletos += r5.json().get("results") or []
 
@@ -138,11 +133,31 @@ def buscar_boletos_por_cpf(cpf: str):
         return f"📭 Nenhum boleto encontrado para o cliente **{nome}**."
 
     texto = [f"📋 Boletos encontrados para **{nome}:**\n"]
+
     for b in boletos:
+        # Extrai campos de forma segura
+        titulo_id = b.get("id") or b.get("billReceivableId") or "-"
+        desc = (
+            b.get("description")
+            or (b.get("billReceivable") or {}).get("description")
+            or "Sem descrição"
+        )
+        amount = (
+            b.get("amount")
+            or (b.get("billReceivable") or {}).get("amount")
+            or (b.get("installment") or {}).get("amount")
+            or 0.0
+        )
+        due_date = (
+            b.get("dueDate")
+            or (b.get("installment") or {}).get("dueDate")
+            or "-"
+        )
+
         texto.append(
-            f"💳 **Título {b.get('id')}** — {b.get('description', '-')}\n"
-            f"💰 Valor: R$ {b.get('amount', 0):,.2f}\n"
-            f"📅 Vencimento: {b.get('dueDate', '-')}\n"
+            f"💳 **Título {titulo_id}** — {desc}\n"
+            f"💰 Valor: R$ {float(amount):,.2f}\n"
+            f"📅 Vencimento: {due_date}\n"
         )
 
     return "\n".join(texto)
