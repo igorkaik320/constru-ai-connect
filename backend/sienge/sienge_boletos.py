@@ -10,7 +10,6 @@ senha = "9SQ2MaNrFOeZOOuOAqeSRy7bYWYDDf85"
 
 BASE_URL = f"https://api.sienge.com.br/{subdominio}/public/api/v1"
 
-# Auth básico
 _token = b64encode(f"{usuario}:{senha}".encode()).decode()
 
 json_headers = {
@@ -18,6 +17,7 @@ json_headers = {
     "accept": "application/json",
     "Content-Type": "application/json",
 }
+
 
 # ==============================================================
 # 🔍 BUSCAR CLIENTE POR CPF
@@ -55,7 +55,9 @@ def listar_boletos_por_cliente(cliente_id: int):
 
 
 def listar_parcelas(titulo_id: int):
-    """Busca as parcelas de um título (necessário para gerar boleto)"""
+    """Busca parcelas de um título"""
+    if not titulo_id:
+        return []
     url = f"{BASE_URL}/accounts-receivable/receivable-bills/{titulo_id}/installments"
     r = requests.get(url, headers=json_headers, timeout=30)
     logging.info(f"GET {url} -> {r.status_code}")
@@ -65,7 +67,7 @@ def listar_parcelas(titulo_id: int):
 
 
 def gerar_link_boleto(titulo_id: int, parcela_id: int) -> str:
-    """Gera link de segunda via do boleto"""
+    """Gera link de segunda via"""
     url = f"{BASE_URL}/payment-slip-notification"
     params = {"billReceivableId": titulo_id, "installmentId": parcela_id}
 
@@ -90,7 +92,7 @@ def gerar_link_boleto(titulo_id: int, parcela_id: int) -> str:
 
 
 # ==============================================================
-# 🔗 BUSCAR BOLETOS POR CPF COMPLETO
+# 🔗 BUSCAR BOLETOS POR CPF COMPLETO (AJUSTADO)
 # ==============================================================
 
 def buscar_boletos_por_cpf(cpf: str):
@@ -109,11 +111,16 @@ def buscar_boletos_por_cpf(cpf: str):
 
     lista = []
     for b in boletos:
-        titulo_id = b.get("id")
+        # 🔧 corrigindo IDs que vêm aninhados
+        titulo_id = b.get("id") or (b.get("billReceivable") or {}).get("id")
         valor = b.get("amount") or (b.get("billReceivable") or {}).get("amount")
         desc = b.get("description") or (b.get("billReceivable") or {}).get("description") or "-"
-        parcelas = listar_parcelas(titulo_id)
 
+        if not titulo_id:
+            logging.warning("⚠️ Título sem ID: %s", json.dumps(b))
+            continue
+
+        parcelas = listar_parcelas(titulo_id)
         for p in parcelas:
             parcela_id = p.get("id")
             venc = p.get("dueDate")
