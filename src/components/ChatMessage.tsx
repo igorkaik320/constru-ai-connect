@@ -1,19 +1,3 @@
-https://cctcontrol.sienge.com.br/sienge/visualizar-relatorio?arquivo=172177487654335291&formato=pdf
-```)  
-para um **link de download forçado**, alterando a forma como o React o renderiza.
-
----
-
-### ✅ Aqui está o `ChatMessage.tsx` corrigido
-
-Ele faz:
-- Pega o mesmo link do texto;
-- Substitui `visualizar-relatorio` por `download-relatorio` (que é o endpoint que baixa o arquivo direto);
-- Remove o link do texto e mostra apenas o botão “📄 Baixar boleto”.
-
----
-
-```tsx
 import { cn } from "@/lib/utils";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
