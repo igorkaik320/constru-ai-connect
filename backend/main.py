@@ -21,8 +21,14 @@ from sienge.sienge_boletos import (
     gerar_link_boleto,
 )
 
+# ============================================================
+# 🔧 CONFIGURAÇÃO DE LOG
+# ============================================================
 logging.basicConfig(level=logging.INFO)
 
+# ============================================================
+# 🚀 INICIALIZAÇÃO DO FASTAPI
+# ============================================================
 app = FastAPI()
 
 # ===== CORS =====
@@ -34,24 +40,29 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ============================================================
+# 📬 MODELOS
+# ============================================================
 class Message(BaseModel):
     user: str
     text: str
 
-
-# ===== Utils =====
+# ============================================================
+# 💰 FUNÇÃO UTILITÁRIA
+# ============================================================
 def money(v):
     try:
         return f"R$ {float(v):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
     except Exception:
         return "R$ 0,00"
 
-
-# ===== NLU =====
+# ============================================================
+# 🧠 INTERPRETAÇÃO DE COMANDOS (NLU SIMPLES)
+# ============================================================
 def entender_intencao(texto: str):
     t = (texto or "").strip().lower()
 
-    # PEDIDOS
+    # === PEDIDOS ===
     if any(k in t for k in ["pedidos pendentes", "listar pendentes", "listar_pedidos_pendentes"]):
         return {"acao": "listar_pedidos_pendentes", "parametros": {}}
 
@@ -71,7 +82,7 @@ def entender_intencao(texto: str):
         pid = next((p for p in t.split() if p.isdigit()), None)
         return {"acao": "relatorio_pdf", "parametros": {"pedido_id": int(pid)}} if pid else {}
 
-    # BOLETOS (CPF ou 2ª via)
+    # === BOLETOS ===
     if "segunda via cpf" in t or "boleto cpf" in t:
         return {"acao": "buscar_boletos_cpf", "parametros": {"texto": t}}
 
@@ -82,8 +93,9 @@ def entender_intencao(texto: str):
 
     return {"acao": None}
 
-
-# ===== Endpoint principal =====
+# ============================================================
+# 📨 ENDPOINT PRINCIPAL
+# ============================================================
 @app.post("/mensagem")
 async def mensagem(msg: Message):
     logging.info("📩 Mensagem recebida: %s -> %s", msg.user, msg.text)
@@ -193,8 +205,9 @@ async def mensagem(msg: Message):
         logging.exception("Erro geral:")
         return {"text": f"❌ Ocorreu um erro: {e}", "buttons": menu_inicial}
 
-
-# ===== Health check =====
+# ============================================================
+# 🩺 HEALTH CHECK
+# ============================================================
 @app.get("/")
 def root():
     return {"ok": True, "service": "constru-ai-connect", "status": "running"}
