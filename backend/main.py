@@ -132,13 +132,36 @@ async def mensagem(msg: Message):
     try:
         # === CONFIRMAÇÃO DE CPF ===
         if msg.user in usuarios_contexto and usuarios_contexto[msg.user].get("aguardando_confirmacao"):
-            if texto.lower() in ["sim", "confirmo", "ok", "confirmar"]:
+            if texto.lower() in ["sim", "confirmo", "ok", "confirmar", "✅ confirmar"]:
                 cpf = usuarios_contexto[msg.user]["cpf"]
                 nome = usuarios_contexto[msg.user]["nome"]
                 del usuarios_contexto[msg.user]
 
                 logging.info(f"✅ CPF confirmado: {cpf} ({nome})")
-                return {"text": f"🔍 Buscando boletos de {nome}...", "loading": True}
+
+                # Mostra mensagem de busca
+                logging.info("🕓 Iniciando busca de boletos...")
+                resultado = buscar_boletos_por_cpf(cpf)
+
+                if "erro" in resultado:
+                    return {"text": resultado["erro"], "buttons": menu_inicial}
+
+                nome = resultado["nome"]
+                boletos = resultado["boletos"]
+
+                if not boletos:
+                    return {"text": f"📭 Nenhum boleto em aberto encontrado para {nome}.", "buttons": menu_inicial}
+
+                linhas = []
+                botoes = []
+                for b in boletos:
+                    linhas.append(f"💳 **Título {b['titulo_id']}** — {money(b['valor'])} — Venc.: {b['vencimento']}")
+                    botoes.append({
+                        "label": f"2ª via {b['titulo_id']}/{b['parcela_id']}",
+                        "action": f"segunda via {b['titulo_id']}/{b['parcela_id']}"
+                    })
+
+                return {"text": f"📋 Boletos em aberto para **{nome}:**\n\n" + "\n".join(linhas), "buttons": botoes}
 
             else:
                 del usuarios_contexto[msg.user]
@@ -160,8 +183,8 @@ async def mensagem(msg: Message):
             return {
                 "text": f"🔎 Localizei o cliente *{nome}*.\nDeseja confirmar para buscar os boletos?",
                 "buttons": [
-                    {"label": "✅ Sim, confirmar", "action": "confirmar"},
-                    {"label": "❌ Não, digitei errado", "action": "buscar_boletos_cpf"},
+                    {"label": "✅ Confirmar", "action": "confirmar"},
+                    {"label": "❌ Corrigir CPF", "action": "buscar_boletos_cpf"},
                 ],
             }
 
