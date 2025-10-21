@@ -5,6 +5,7 @@ import logging
 import base64
 import re
 
+# ====== IMPORTAÇÕES SIENGE ======
 from sienge.sienge_pedidos import (
     listar_pedidos_pendentes,
     itens_pedido,
@@ -31,7 +32,6 @@ logging.basicConfig(level=logging.INFO)
 # ============================================================
 app = FastAPI()
 
-# ===== CORS =====
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -41,14 +41,14 @@ app.add_middleware(
 )
 
 # ============================================================
-# 📬 MODELOS
+# 📬 MODELO DE MENSAGEM
 # ============================================================
 class Message(BaseModel):
     user: str
     text: str
 
 # ============================================================
-# 💰 FUNÇÃO UTILITÁRIA
+# 💰 FORMATAÇÃO DE VALORES
 # ============================================================
 def money(v):
     try:
@@ -57,14 +57,14 @@ def money(v):
         return "R$ 0,00"
 
 # ============================================================
-# 🧠 INTERPRETAÇÃO DE COMANDOS (NLU SIMPLES)
+# 🧠 INTERPRETAÇÃO DE INTENÇÕES
 # ============================================================
 def entender_intencao(texto: str):
     t = (texto or "").strip().lower()
 
     # === PEDIDOS ===
     if any(k in t for k in ["pedidos pendentes", "listar pendentes", "listar_pedidos_pendentes"]):
-        return {"acao": "listar_pedidos_pendentes", "parametros": {}}
+        return {"acao": "listar_pedidos_pendentes"}
 
     if "autorizar pedido" in t:
         pid = next((p for p in t.split() if p.isdigit()), None)
@@ -86,7 +86,8 @@ def entender_intencao(texto: str):
     if "segunda via cpf" in t or "boleto cpf" in t:
         return {"acao": "buscar_boletos_cpf", "parametros": {"texto": t}}
 
-    if "gerar boleto" in t or "2ª via" in t or "segunda via" in t:
+    # Exemplo: “2ª via 267/99” ou “gerar boleto 267 99”
+    if any(k in t for k in ["gerar boleto", "2ª via", "segunda via"]):
         nums = [int(n) for n in re.findall(r"\d+", t)]
         if len(nums) >= 2:
             return {"acao": "link_boleto", "parametros": {"titulo_id": nums[0], "parcela_id": nums[1]}}
@@ -180,15 +181,20 @@ async def mensagem(msg: Message):
             linhas = []
             botoes = []
             for b in boletos:
-                linhas.append(f"💳 **Título {b['titulo_id']}** — {money(b['valor'])} — Venc.: {b['vencimento']}")
+                linhas.append(
+                    f"💳 **Título {b['titulo_id']}** — {money(b['valor'])} — Venc.: {b['vencimento']}"
+                )
                 botoes.append({
                     "label": f"2ª via {b['titulo_id']}/{b['parcela_id']}",
                     "action": "link_boleto",
                     "titulo_id": b["titulo_id"],
-                    "parcela_id": b["parcela_id"]
+                    "parcela_id": b["parcela_id"],
                 })
 
-            return {"text": f"📋 Boletos em aberto para **{nome}:**\n\n" + "\n".join(linhas), "buttons": botoes}
+            return {
+                "text": f"📋 Boletos em aberto para **{nome}:**\n\n" + "\n".join(linhas),
+                "buttons": botoes,
+            }
 
         if acao == "link_boleto":
             titulo = parametros.get("titulo_id")
