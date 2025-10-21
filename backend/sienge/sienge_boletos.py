@@ -1,11 +1,13 @@
 import requests
 import logging
+import datetime
+import pandas as pd
 from base64 import b64encode
 
 # ============================================================
 # 🚀 IDENTIFICAÇÃO DA VERSÃO
 # ============================================================
-logging.warning("🚀 Rodando versão 1.8 do sienge_boletos.py (parcelas extras e tratamento de erro interno)")
+logging.warning("🚀 Rodando versão 3.1 do sienge_financeiro.py (DRE + Fluxo + Obras + Fornecedores)")
 
 # ============================================================
 # 🔐 CONFIGURAÇÕES DE AUTENTICAÇÃO SIENGE
@@ -24,204 +26,175 @@ json_headers = {
 }
 
 # ============================================================
-# 👤 CLIENTE
+# 🧮 FUNÇÕES AUXILIARES
 # ============================================================
-def buscar_cliente_por_cpf(cpf: str):
-    """Busca cliente no Sienge pelo CPF."""
-    url = f"{BASE_URL}/customers?cpf={cpf}"
-    logging.info(f"GET {url}")
-    r = requests.get(url, headers=json_headers, timeout=30)
-    logging.info(f"{url} -> {r.status_code}")
-
-    if r.status_code != 200:
-        logging.warning("Erro ao buscar cliente: %s", r.text)
-        return None
-
-    data = r.json()
-    results = data.get("results") or data
-    if isinstance(results, list) and len(results) > 0:
-        return results[0]
-    return None
-
-
-# ============================================================
-# 🧾 BOLETOS / TÍTULOS
-# ============================================================
-def listar_boletos_por_cliente(cliente_id: int):
-    """Lista boletos/títulos vinculados a um cliente."""
-    url = f"{BASE_URL}/accounts-receivable/receivable-bills?customerId={cliente_id}"
-    r = requests.get(url, headers=json_headers, timeout=30)
-    logging.info(f"GET {url} -> {r.status_code}")
-    if r.status_code != 200:
-        return []
-    return r.json().get("results") or []
-
-
-def listar_parcelas(titulo_id: int):
-    """Lista parcelas de um título."""
-    if not titulo_id:
-        return []
-    url = f"{BASE_URL}/accounts-receivable/receivable-bills/{titulo_id}/installments"
-    r = requests.get(url, headers=json_headers, timeout=30)
-    logging.info(f"GET {url} -> {r.status_code}")
-    if r.status_code != 200:
-        return []
-    return r.json().get("results") or []
-
-
-# ============================================================
-# 🧠 VERIFICAÇÃO DE SEGUNDA VIA (LOG DETALHADO)
-# ============================================================
-def boleto_existe(titulo_id: int, parcela_id: int) -> bool:
-    """Verifica se existe segunda via real para essa parcela."""
-    url = f"{BASE_URL}/payment-slip-notification"
-    params = {"billReceivableId": titulo_id, "installmentId": parcela_id}
-
+def money(v):
     try:
-        r = requests.get(url, headers=json_headers, params=params, timeout=20)
-        logging.info(f"🔎 Verificando boleto: {params} -> {r.status_code}")
-        logging.info(f"Resposta: {r.text[:400]}")
+        return f"R$ {float(v):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+    except:
+        return "R$ 0,00"
 
-        # 200 = OK
-        if r.status_code == 200:
-            data = r.json()
-            results = data.get("results") or []
-            if results and results[0].get("urlReport"):
-                logging.info(f"🟢 Segunda via encontrada -> {results[0].get('urlReport')}")
-                return True
 
-        # 422 = Erro de regra no Sienge
-        if r.status_code == 422:
-            if "RuntimeException" in r.text or "SiengeBusinessException" in r.text:
-                logging.warning(f"⚠️ Erro interno no Sienge ao tentar gerar boleto ({titulo_id}/{parcela_id})")
-            else:
-                logging.info("🔴 Nenhuma segunda via disponível para essa parcela.")
+def get_date(days_ago=30):
+    hoje = datetime.date.today()
+    return (hoje - datetime.timedelta(days=days_ago)).isoformat(), hoje.isoformat()
 
-    except Exception as e:
-        logging.error(f"Erro ao verificar boleto ({titulo_id}/{parcela_id}): {e}")
-    return False
 
+def get(endpoint, params=None):
+    url = f"{BASE_URL}/{endpoint}"
+    logging.info(f"➡️ GET {url}")
+    r = requests.get(url, headers=json_headers, params=params, timeout=30)
+    logging.info(f"📦 Status: {r.status_code}")
+    if r.status_code == 200:
+        return r.json()
+    logging.error(f"❌ Erro na requisição: {r.status_code} -> {r.text[:200]}")
+    return {}
 
 # ============================================================
-# 🔍 BUSCAR BOLETOS POR CPF (CORRIGIDO E APRIMORADO)
+# 💰 1️⃣ RESUMO FINANCEIRO / DRE
 # ============================================================
-def buscar_boletos_por_cpf(cpf: str):
-    """Busca apenas boletos realmente disponíveis para 2ª via (com logs detalhados)."""
-    cliente = buscar_cliente_por_cpf(cpf)
-    if not cliente:
-        return {"erro": "❌ Nenhum cliente encontrado com esse CPF."}
+def resumo_financeiro_dre():
+    logging.info("📊 Consultando DRE resumido...")
 
-    nome = cliente.get("name")
-    cid = cliente.get("id")
-    logging.info(f"✅ Cliente encontrado: {nome} (ID {cid})")
+    inicio, fim = get_date(30)
+    logging.info(f"📅 Período: {inicio} até {fim}")
 
-    boletos = listar_boletos_por_cliente(cid)
-    logging.info(f"📊 Total de títulos retornados: {len(boletos)}")
+    # --- Contas a pagar ---
+    pagar = get("bills", {"startDate": inicio, "endDate": fim})
+    total_pagar = sum(i.get("totalInvoiceAmount", 0) for i in pagar.get("results", []))
 
-    if not boletos:
-        return {"erro": f"📭 Nenhum boleto encontrado para {nome}."}
+    # --- Contas a receber ---
+    receber = get("accounts-receivable/receivable-bills", {"startDate": inicio, "endDate": fim})
+    total_receber = sum(i.get("amount", 0) for i in receber.get("results", []))
 
-    lista = []
-    for b in boletos:
-        titulo_id = b.get("id") or b.get("receivableBillId")
-        valor = b.get("amount") or b.get("receivableBillValue") or 0.0
-        desc = b.get("description") or b.get("documentNumber") or b.get("note") or "-"
-        emissao = b.get("issueDate")
-        quitado = b.get("payOffDate")
+    lucro = total_receber - total_pagar
 
-        logging.info(f"🧾 Título {titulo_id} | Valor {valor} | Descrição: {desc}")
-
-        if quitado:
-            logging.info(f"⏭️ Ignorando título {titulo_id} (já quitado)")
-            continue
-
-        parcelas = listar_parcelas(titulo_id)
-        logging.info(f"📦 Parcelas do título {titulo_id}: {len(parcelas)}")
-
-        if not parcelas:
-            continue
-
-        for p in parcelas:
-            logging.info(f"🧩 Parcela -> {p}")
-
-            # ✅ Usa o campo installmentId como ID principal
-            parcela_id = p.get("id") or p.get("installmentId")
-            if not parcela_id:
-                logging.info("⚠️ Parcela sem ID, ignorada")
-                continue
-
-            logging.info(f"🔍 Testando boleto título={titulo_id}, parcela={parcela_id}, valor={p.get('balanceDue')}")
-            existe = boleto_existe(titulo_id, parcela_id)
-            logging.info(f"Resultado da verificação -> {'🟢 Existe' if existe else '🔴 Não existe'}")
-
-            if not existe:
-                continue
-
-            lista.append({
-                "titulo_id": titulo_id,
-                "parcela_id": parcela_id,
-                "descricao": desc,
-                "valor": p.get("balanceDue") or valor,
-                "vencimento": p.get("dueDate") or emissao,
-            })
-
-        # 🔍 Checagem extra para parcelas conhecidas (Sienge às vezes omite)
-        parcelas_extras = [56, 99]
-        for extra_id in parcelas_extras:
-            logging.info(f"🔄 Tentando verificar parcela extra manual: {extra_id} (título {titulo_id})")
-            existe = boleto_existe(titulo_id, extra_id)
-            if existe:
-                lista.append({
-                    "titulo_id": titulo_id,
-                    "parcela_id": extra_id,
-                    "descricao": desc,
-                    "valor": valor,
-                    "vencimento": emissao,
-                })
-
-    if not lista:
-        return {"erro": f"📭 Nenhum boleto disponível para segunda via de {nome}."}
-
-    return {
-        "nome": nome,
-        "boletos": lista
+    dre = {
+        "periodo": {"inicio": inicio, "fim": fim},
+        "receitas": total_receber,
+        "despesas": total_pagar,
+        "lucro": lucro,
+        "formatado": {
+            "receitas": money(total_receber),
+            "despesas": money(total_pagar),
+            "lucro": money(lucro),
+        },
     }
 
+    logging.info(f"💰 Receita: {money(total_receber)} | Despesa: {money(total_pagar)} | Lucro: {money(lucro)}")
+    return dre
 
 # ============================================================
-# 🔗 GERAR LINK DO BOLETO (2ª VIA)
+# 📈 2️⃣ FLUXO DE CAIXA
 # ============================================================
-def gerar_link_boleto(titulo_id: int, parcela_id: int) -> str:
-    """Gera link da segunda via do boleto."""
-    url = f"{BASE_URL}/payment-slip-notification"
-    params = {"billReceivableId": titulo_id, "installmentId": parcela_id}
+def fluxo_caixa(dias=30):
+    logging.info("📊 Gerando fluxo de caixa diário...")
 
-    logging.info(f"GET {url} -> params={params}")
-    r = requests.get(url, headers=json_headers, params=params, timeout=30)
-    logging.info(f"{url} -> {r.status_code}")
-    logging.info(f"Resposta: {r.text[:400]}")
+    inicio, fim = get_date(dias)
+    bills = get("bills", {"startDate": inicio, "endDate": fim}).get("results", [])
+    df = pd.DataFrame(bills)
 
-    if r.status_code == 200:
-        try:
-            data = r.json()
-            results = data.get("results") or []
-            if results and isinstance(results, list):
-                result = results[0]
-                link = result.get("urlReport")
-                linha_digitavel = result.get("digitableNumber")
+    if df.empty:
+        logging.warning("⚠️ Nenhum dado financeiro encontrado.")
+        return []
 
-                if link:
-                    logging.info(f"🟢 Link do boleto gerado: {link}")
-                    return (
-                        f"📄 **Segunda via gerada com sucesso!**\n"
-                        f"🔗 [Clique aqui para abrir o boleto]({link})\n"
-                        f"💳 **Linha digitável:** `{linha_digitavel}`"
-                    )
-        except Exception as e:
-            logging.exception("Erro ao processar resposta do boleto:")
-            return f"❌ Erro ao processar boleto: {e}"
+    df["issueDate"] = pd.to_datetime(df["issueDate"], errors="coerce")
+    df["totalInvoiceAmount"] = pd.to_numeric(df["totalInvoiceAmount"], errors="coerce").fillna(0)
 
-    elif r.status_code == 422:
-        return "⚠️ O Sienge retornou erro interno ao tentar gerar o boleto. Verifique se há dados inconsistentes no título."
+    fluxo = (
+        df.groupby(df["issueDate"].dt.date)["totalInvoiceAmount"]
+        .sum()
+        .reset_index()
+        .rename(columns={"issueDate": "data", "totalInvoiceAmount": "valor"})
+    )
 
-    return f"❌ Erro ao gerar boleto ({r.status_code})."
+    fluxo["tipo"] = "Saída"
+    fluxo = fluxo.to_dict(orient="records")
+    logging.info(f"📅 {len(fluxo)} dias processados no fluxo de caixa")
+    return fluxo
+
+# ============================================================
+# 🏗️ 3️⃣ GASTOS POR OBRA
+# ============================================================
+def gastos_por_obra():
+    logging.info("🏗️ Consultando gastos por obra...")
+    inicio, fim = get_date(60)
+    bills = get("bills", {"startDate": inicio, "endDate": fim}).get("results", [])
+    dados = []
+
+    for b in bills:
+        bill_id = b.get("id")
+        total = b.get("totalInvoiceAmount", 0)
+        obras = get(f"bills/{bill_id}/buildings-cost").get("results", [])
+        for o in obras:
+            dados.append({
+                "obra": o.get("buildingName", "Sem nome"),
+                "empresa": o.get("costEstimationSheetName", "Não informado"),
+                "valor": total * (o.get("percentage", 0) / 100),
+            })
+
+    df = pd.DataFrame(dados)
+    if df.empty:
+        return []
+
+    df = df.groupby(["empresa", "obra"])["valor"].sum().reset_index()
+    logging.info(f"🏗️ {len(df)} obras encontradas.")
+    return df.to_dict(orient="records")
+
+# ============================================================
+# 🏢 4️⃣ GASTOS POR CENTRO DE CUSTO
+# ============================================================
+def gastos_por_centro_custo():
+    logging.info("🏢 Consultando gastos por centro de custo...")
+    inicio, fim = get_date(60)
+    bills = get("bills", {"startDate": inicio, "endDate": fim}).get("results", [])
+    dados = []
+
+    for b in bills:
+        bill_id = b.get("id")
+        total = b.get("totalInvoiceAmount", 0)
+        centros = get(f"bills/{bill_id}/budget-categories").get("results", [])
+        for c in centros:
+            dados.append({
+                "centro_custo": c.get("paymentCategoriesId", "Não informado"),
+                "valor": total * (c.get("percentage", 0) / 100),
+            })
+
+    df = pd.DataFrame(dados)
+    if df.empty:
+        return []
+
+    df = df.groupby("centro_custo")["valor"].sum().reset_index()
+    logging.info(f"🏢 {len(df)} centros de custo processados.")
+    return df.to_dict(orient="records")
+
+# ============================================================
+# 👥 5️⃣ GASTOS POR FORNECEDOR
+# ============================================================
+def gastos_por_fornecedor():
+    logging.info("👥 Consultando gastos por fornecedor...")
+    inicio, fim = get_date(60)
+    bills = get("bills", {"startDate": inicio, "endDate": fim}).get("results", [])
+
+    df = pd.DataFrame(bills)
+    if df.empty:
+        return []
+
+    df = df.groupby("creditorId")["totalInvoiceAmount"].sum().reset_index()
+    df = df.sort_values(by="totalInvoiceAmount", ascending=False)
+    df.rename(columns={"creditorId": "fornecedor", "totalInvoiceAmount": "valor"}, inplace=True)
+
+    logging.info(f"👥 {len(df)} fornecedores processados.")
+    return df.to_dict(orient="records")
+
+# ============================================================
+# 📊 6️⃣ RELATÓRIO UNIFICADO
+# ============================================================
+def gerar_relatorio_json():
+    return {
+        "dre": resumo_financeiro_dre(),
+        "fluxo_caixa": fluxo_caixa(),
+        "gastos_por_obra": gastos_por_obra(),
+        "gastos_por_centro_custo": gastos_por_centro_custo(),
+        "gastos_por_fornecedor": gastos_por_fornecedor(),
+    }
