@@ -1,97 +1,3 @@
-import requests
-import logging
-import json
-from base64 import b64encode
-from functools import lru_cache
-
-# === CONFIGURAÇÕES ===
-subdominio = "cctcontrol"
-usuario = "cctcontrol-api"
-senha = "9SQ2MaNrFOeZOOuOAqeSRy7bYWYDDf85"
-
-BASE_URL = f"https://api.sienge.com.br/{subdominio}/public/api/v1"
-
-# Auth básico
-_token = b64encode(f"{usuario}:{senha}".encode()).decode()
-json_headers = {
-    "Authorization": f"Basic {_token}",
-    "accept": "application/json",
-    "Content-Type": "application/json",
-}
-
-# ==============================================================
-# 🔍 CLIENTE
-# ==============================================================
-
-def buscar_cliente_por_cpf(cpf: str):
-    """Busca cliente no Sienge pelo CPF"""
-    url = f"{BASE_URL}/customers?cpf={cpf}"
-    logging.info(f"GET {url}")
-    r = requests.get(url, headers=json_headers, timeout=30)
-    logging.info(f"{url} -> {r.status_code}")
-
-    if r.status_code != 200:
-        logging.warning("Erro ao buscar cliente: %s", r.text)
-        return None
-
-    data = r.json()
-    results = data.get("results") or data
-    if isinstance(results, list) and len(results) > 0:
-        return results[0]
-    return None
-
-# ==============================================================
-# 🧾 BOLETOS
-# ==============================================================
-
-def listar_boletos_por_cliente(cliente_id: int):
-    """Lista boletos vinculados a um cliente"""
-    url = f"{BASE_URL}/accounts-receivable/receivable-bills?customerId={cliente_id}"
-    r = requests.get(url, headers=json_headers, timeout=30)
-    logging.info(f"GET {url} -> {r.status_code}")
-    if r.status_code != 200:
-        return []
-    return r.json().get("results") or []
-
-
-def listar_parcelas(titulo_id: int):
-    """Lista parcelas de um título"""
-    if not titulo_id:
-        return []
-    url = f"{BASE_URL}/accounts-receivable/receivable-bills/{titulo_id}/installments"
-    r = requests.get(url, headers=json_headers, timeout=30)
-    logging.info(f"GET {url} -> {r.status_code}")
-    if r.status_code != 200:
-        return []
-    return r.json().get("results") or []
-
-
-# ==============================================================
-# 🧠 CACHE DE TESTES DE SEGUNDA VIA
-# ==============================================================
-
-@lru_cache(maxsize=100)
-def boleto_existe(titulo_id: int, parcela_id: int) -> bool:
-    """Verifica se existe segunda via real para essa parcela"""
-    url = f"{BASE_URL}/payment-slip-notification"
-    params = {"billReceivableId": titulo_id, "installmentId": parcela_id}
-    r = requests.get(url, headers=json_headers, params=params, timeout=20)
-    logging.info(f"🔎 Verificando boleto: {params} -> {r.status_code}")
-    if r.status_code == 200:
-        try:
-            data = r.json()
-            results = data.get("results") or []
-            if results and results[0].get("urlReport"):
-                return True
-        except Exception:
-            pass
-    return False
-
-
-# ==============================================================
-# 🔗 BUSCAR BOLETOS POR CPF
-# ==============================================================
-
 def buscar_boletos_por_cpf(cpf: str):
     """Busca apenas boletos realmente disponíveis para 2ª via."""
     cliente = buscar_cliente_por_cpf(cpf)
@@ -122,16 +28,19 @@ def buscar_boletos_por_cpf(cpf: str):
             continue
 
         for p in parcelas:
-            if p.get("settlementDate") or p.get("canceled"):
-                continue
-
             parcela_id = p.get("id")
             if not parcela_id:
                 continue
 
+            # 🔍 Log detalhado da verificação
+            logging.info(f"🔎 Testando boleto título={titulo_id} parcela={parcela_id}")
+
             # ✅ Verifica se o boleto realmente existe
             if not boleto_existe(titulo_id, parcela_id):
+                logging.info(f"🔴 Boleto NÃO disponível -> Título {titulo_id}, Parcela {parcela_id}")
                 continue
+
+            logging.info(f"🟢 Boleto DISPONÍVEL -> Título {titulo_id}, Parcela {parcela_id}")
 
             lista.append({
                 "titulo_id": titulo_id,
@@ -148,37 +57,3 @@ def buscar_boletos_por_cpf(cpf: str):
         "nome": nome,
         "boletos": lista
     }
-
-
-# ==============================================================
-# 🔗 GERAR LINK BOLETO
-# ==============================================================
-
-def gerar_link_boleto(titulo_id: int, parcela_id: int) -> str:
-    """Gera link da segunda via do boleto"""
-    url = f"{BASE_URL}/payment-slip-notification"
-    params = {"billReceivableId": titulo_id, "installmentId": parcela_id}
-
-    logging.info(f"GET {url} -> params={params}")
-    r = requests.get(url, headers=json_headers, params=params, timeout=30)
-    logging.info(f"{url} -> {r.status_code}")
-
-    if r.status_code == 200:
-        try:
-            data = r.json()
-            results = data.get("results") or data.get("data") or []
-            if results and isinstance(results, list):
-                result = results[0]
-                link = result.get("urlReport")
-                linha_digitavel = result.get("digitableNumber")
-                if link:
-                    return (
-                        f"📄 **Segunda via gerada com sucesso!**\n"
-                        f"🔗 [Clique aqui para abrir o boleto]({link})\n"
-                        f"💳 **Linha digitável:** `{linha_digitavel}`"
-                    )
-        except Exception as e:
-            logging.exception("Erro ao processar resposta do boleto:")
-            return f"❌ Erro ao processar boleto: {e}"
-
-    return f"❌ Erro ao gerar boleto ({r.status_code})."
