@@ -3,7 +3,7 @@ import logging
 from base64 import b64encode
 
 # 🚀 Identificação da versão atual
-logging.warning("🚀 Rodando versão 1.5 do sienge_boletos.py (log detalhado de boletos)")
+logging.warning("🚀 Rodando versão 1.6 do sienge_boletos.py (diagnóstico completo de boletos)")
 
 # ============================================================
 # 🔐 CONFIGURAÇÕES DE AUTENTICAÇÃO SIENGE
@@ -94,10 +94,10 @@ def boleto_existe(titulo_id: int, parcela_id: int) -> bool:
 
 
 # ============================================================
-# 🔍 BUSCAR BOLETOS POR CPF
+# 🔍 BUSCAR BOLETOS POR CPF (DIAGNÓSTICO COMPLETO)
 # ============================================================
 def buscar_boletos_por_cpf(cpf: str):
-    """Busca apenas boletos realmente disponíveis para 2ª via."""
+    """Busca apenas boletos realmente disponíveis para 2ª via (com logs detalhados)."""
     cliente = buscar_cliente_por_cpf(cpf)
     if not cliente:
         return {"erro": "❌ Nenhum cliente encontrado com esse CPF."}
@@ -107,6 +107,8 @@ def buscar_boletos_por_cpf(cpf: str):
     logging.info(f"✅ Cliente encontrado: {nome} (ID {cid})")
 
     boletos = listar_boletos_por_cliente(cid)
+    logging.info(f"📊 Total de títulos retornados: {len(boletos)}")
+
     if not boletos:
         return {"erro": f"📭 Nenhum boleto encontrado para {nome}."}
 
@@ -118,16 +120,24 @@ def buscar_boletos_por_cpf(cpf: str):
         emissao = b.get("issueDate")
         quitado = b.get("payOffDate")
 
+        logging.info(f"🧾 Título {titulo_id} | Valor {valor} | Descrição: {desc}")
+
         if quitado:
+            logging.info(f"⏭️ Ignorando título {titulo_id} (já quitado)")
             continue
 
         parcelas = listar_parcelas(titulo_id)
+        logging.info(f"📦 Parcelas do título {titulo_id}: {len(parcelas)}")
+
         if not parcelas:
             continue
 
         for p in parcelas:
+            logging.info(f"🧩 Parcela -> {p}")
+
             parcela_id = p.get("id")
             if not parcela_id:
+                logging.info("⚠️ Parcela sem ID, ignorada")
                 continue
 
             logging.info(f"🔍 Testando boleto título={titulo_id}, parcela={parcela_id}, valor={p.get('amount')}")
