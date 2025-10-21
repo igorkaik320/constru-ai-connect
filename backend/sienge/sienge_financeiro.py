@@ -6,7 +6,7 @@ from datetime import datetime
 # ============================================================
 # 🚀 IDENTIFICAÇÃO DA VERSÃO
 # ============================================================
-logging.warning("🚀 Rodando versão 1.1 do sienge_financeiro.py (logs detalhados de retorno Sienge)")
+logging.warning("🚀 Rodando versão 1.2 do sienge_financeiro.py (rotas corrigidas e logs detalhados)")
 
 # ============================================================
 # 🔐 CONFIGURAÇÕES DE AUTENTICAÇÃO SIENGE
@@ -28,60 +28,46 @@ json_headers = {
 # ============================================================
 # 💰 RESUMO FINANCEIRO GERAL
 # ============================================================
-def resumo_financeiro(periodo_inicio: str = None, periodo_fim: str = None):
-    """Calcula o total de contas a pagar e a receber com logs detalhados."""
+def resumo_financeiro():
+    """Calcula o total de contas a pagar e a receber."""
     try:
-        params = {}
-        if periodo_inicio and periodo_fim:
-            params = {"startDate": periodo_inicio, "endDate": periodo_fim}
-
         logging.info("📊 Consultando resumo financeiro (contas a pagar e receber)...")
 
-        # Contas a pagar
-        url_pagar = f"{BASE_URL}/accounts-payable"
-        pagar = requests.get(url_pagar, headers=json_headers, params=params, timeout=40)
-        logging.info(f"➡️ GET {url_pagar} -> {pagar.status_code}")
+        url_pagar = f"{BASE_URL}/accounts-payable/payable-bills"
+        url_receber = f"{BASE_URL}/accounts-receivable/receivable-bills"
 
-        # Contas a receber
-        url_receber = f"{BASE_URL}/accounts-receivable"
-        receber = requests.get(url_receber, headers=json_headers, params=params, timeout=40)
-        logging.info(f"➡️ GET {url_receber} -> {receber.status_code}")
+        r_pagar = requests.get(url_pagar, headers=json_headers, timeout=40)
+        r_receber = requests.get(url_receber, headers=json_headers, timeout=40)
 
-        if pagar.status_code != 200 or receber.status_code != 200:
-            logging.error(f"Erro nas requisições: pagar={pagar.status_code}, receber={receber.status_code}")
+        logging.info(f"➡️ GET {url_pagar} -> {r_pagar.status_code}")
+        logging.info(f"➡️ GET {url_receber} -> {r_receber.status_code}")
+
+        if r_pagar.status_code != 200 or r_receber.status_code != 200:
+            logging.error("Erro nas requisições financeiras")
             return {"erro": "❌ Erro ao buscar dados financeiros no Sienge."}
 
-        contas_pagar = pagar.json().get("results", [])
-        contas_receber = receber.json().get("results", [])
+        contas_pagar = r_pagar.json().get("results", [])
+        contas_receber = r_receber.json().get("results", [])
 
-        logging.info(f"📦 Contas a pagar: {len(contas_pagar)} registros")
-        logging.info(f"📦 Contas a receber: {len(contas_receber)} registros")
+        logging.info(f"📦 {len(contas_pagar)} títulos a pagar | {len(contas_receber)} a receber")
 
-        # Mostra um exemplo do retorno
-        if contas_pagar:
-            exemplo = contas_pagar[0]
-            logging.info(f"🔍 Exemplo contas a pagar: {str(exemplo)[:400]}")
-        if contas_receber:
-            exemplo = contas_receber[0]
-            logging.info(f"🔍 Exemplo contas a receber: {str(exemplo)[:400]}")
-
-        # Soma total (verifica vários campos comuns)
+        # Função auxiliar para extrair o valor corretamente
         def extrair_valor(item):
-            for campo in ["value", "amount", "billValue", "totalValue", "installmentValue"]:
+            for campo in ["amount", "value", "billValue", "totalValue"]:
                 if campo in item:
                     return float(item[campo] or 0)
             return 0.0
 
-        total_pagar = sum(extrair_valor(c) for c in contas_pagar)
-        total_receber = sum(extrair_valor(c) for c in contas_receber)
+        total_pagar = sum(extrair_valor(i) for i in contas_pagar)
+        total_receber = sum(extrair_valor(i) for i in contas_receber)
         lucro = total_receber - total_pagar
 
-        logging.info(f"💸 Total a pagar: {total_pagar}")
-        logging.info(f"💰 Total a receber: {total_receber}")
+        logging.info(f"💸 A pagar: {total_pagar}")
+        logging.info(f"💰 A receber: {total_receber}")
         logging.info(f"📈 Lucro: {lucro}")
 
         return {
-            "periodo": f"{periodo_inicio or 'início'} até {periodo_fim or 'hoje'}",
+            "periodo": "Geral",
             "a_pagar": total_pagar,
             "a_receber": total_receber,
             "lucro": lucro,
@@ -96,10 +82,10 @@ def resumo_financeiro(periodo_inicio: str = None, periodo_fim: str = None):
 # 🏗️ GASTOS POR OBRA
 # ============================================================
 def gastos_por_obra():
-    """Agrupa os valores de contas a pagar por obra (unitName)."""
+    """Agrupa os valores de contas a pagar por obra."""
     try:
-        url = f"{BASE_URL}/accounts-payable"
-        logging.info(f"🏗️ Consultando gastos por obra: GET {url}")
+        url = f"{BASE_URL}/accounts-payable/payable-bills"
+        logging.info(f"🏗️ Consultando gastos por obra: {url}")
         r = requests.get(url, headers=json_headers, timeout=40)
         logging.info(f"➡️ Status: {r.status_code}")
 
@@ -109,19 +95,14 @@ def gastos_por_obra():
         dados = r.json().get("results", [])
         logging.info(f"📦 {len(dados)} registros retornados.")
 
-        if dados:
-            logging.info(f"🔍 Exemplo de item: {str(dados[0])[:400]}")
-
         obras = {}
         for item in dados:
-            obra = item.get("unitName") or item.get("unitId") or "Não informado"
-            valor = item.get("value") or item.get("amount") or item.get("totalValue") or 0
-            valor = float(valor)
+            obra = item.get("unitName") or item.get("unitId") or "Sem obra"
+            valor = float(item.get("amount") or item.get("value") or 0)
             obras[obra] = obras.get(obra, 0) + valor
 
-        logging.info(f"✅ {len(obras)} obras com lançamentos encontrados.")
         for nome, val in obras.items():
-            logging.info(f"🏗️ {nome} -> {val}")
+            logging.info(f"🏗️ {nome}: {val}")
 
         return [{"obra": k, "valor": v} for k, v in obras.items()]
 
@@ -136,8 +117,8 @@ def gastos_por_obra():
 def gastos_por_centro_custo():
     """Agrupa os valores de contas a pagar por centro de custo."""
     try:
-        url = f"{BASE_URL}/accounts-payable"
-        logging.info(f"🏢 Consultando gastos por centro de custo: GET {url}")
+        url = f"{BASE_URL}/accounts-payable/payable-bills"
+        logging.info(f"🏢 Consultando gastos por centro de custo: {url}")
         r = requests.get(url, headers=json_headers, timeout=40)
         logging.info(f"➡️ Status: {r.status_code}")
 
@@ -147,19 +128,14 @@ def gastos_por_centro_custo():
         dados = r.json().get("results", [])
         logging.info(f"📦 {len(dados)} registros retornados.")
 
-        if dados:
-            logging.info(f"🔍 Exemplo de item: {str(dados[0])[:400]}")
-
         centros = {}
         for item in dados:
-            centro = item.get("costCenterName") or item.get("costCenterId") or "Não informado"
-            valor = item.get("value") or item.get("amount") or item.get("totalValue") or 0
-            valor = float(valor)
+            centro = item.get("costCenterName") or item.get("costCenterId") or "Sem centro de custo"
+            valor = float(item.get("amount") or item.get("value") or 0)
             centros[centro] = centros.get(centro, 0) + valor
 
-        logging.info(f"✅ {len(centros)} centros de custo encontrados.")
         for nome, val in centros.items():
-            logging.info(f"🏢 {nome} -> {val}")
+            logging.info(f"🏢 {nome}: {val}")
 
         return [{"centro_custo": k, "valor": v} for k, v in centros.items()]
 
