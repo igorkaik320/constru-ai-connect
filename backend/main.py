@@ -1,11 +1,9 @@
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import logging
 import base64
 import re
-import requests
-from twilio.twiml.messaging_response import MessagingResponse
 
 from sienge.sienge_pedidos import (
     listar_pedidos_pendentes,
@@ -49,7 +47,7 @@ class Message(BaseModel):
     text: str
 
 # ============================================================
-# 💰 FUNÇÕES UTILITÁRIAS
+# 💰 FUNÇÃO UTILITÁRIA
 # ============================================================
 def money(v):
     try:
@@ -58,23 +56,23 @@ def money(v):
         return "R$ 0,00"
 
 # ============================================================
-# 🧠 MEMÓRIA DE CONVERSAS TEMPORÁRIA
+# 🧠 CONTEXTO DE USUÁRIOS TEMPORÁRIO (para confirmação de CPF)
 # ============================================================
 usuarios_contexto = {}
 
 # ============================================================
-# 🧠 INTERPRETAÇÃO DE COMANDOS
+# 🧠 INTERPRETAÇÃO DE COMANDOS (NLU SIMPLES)
 # ============================================================
 def entender_intencao(texto: str):
     t = (texto or "").strip().lower()
 
-    # === COMANDOS GERAIS ===
-    if t in ["oi", "olá", "ola", "bom dia", "boa tarde", "boa noite"]:
-        return {"acao": "saudacao", "parametros": {}}
+    # === SAUDAÇÃO ===
+    if t in ["oi", "ola", "olá", "bom dia", "boa tarde", "boa noite"]:
+        return {"acao": "saudacao"}
 
     # === PEDIDOS ===
     if any(k in t for k in ["pedidos pendentes", "listar pendentes"]):
-        return {"acao": "listar_pedidos_pendentes", "parametros": {}}
+        return {"acao": "listar_pedidos_pendentes"}
 
     if "autorizar pedido" in t:
         pid = next((p for p in t.split() if p.isdigit()), None)
@@ -120,38 +118,49 @@ async def mensagem(msg: Message):
         {"label": "💳 Segunda Via de Boletos", "action": "buscar_boletos_cpf"},
     ]
 
-    # === Saudação inicial ===
-    if acao == "saudacao" or texto == "":
+    # === Mensagem inicial ===
+    if not texto or acao == "saudacao":
         return {
             "text": "👋 Olá! Seja bem-vindo à Constru.IA.\nComo posso te ajudar hoje?",
-            "buttons": menu_inicial
+            "buttons": menu_inicial,
         }
 
     try:
-        # === Fluxo do CPF ===
+        # === CONFIRMAÇÃO DE CPF ===
         if msg.user in usuarios_contexto and usuarios_contexto[msg.user].get("aguardando_confirmacao"):
             if texto.lower() in ["sim", "confirmo", "confirmar", "ok"]:
                 cpf = usuarios_contexto[msg.user]["cpf"]
                 nome = usuarios_contexto[msg.user]["nome"]
                 del usuarios_contexto[msg.user]
-                return {
-                    "text": f"🔎 Buscando boletos para {nome}...",
-                    "loading": True
-                } | buscar_boletos_por_cpf(cpf)
+                logging.info(f"✅ CPF confirmado: {cpf} ({nome})")
+                resultado = buscar_boletos_por_cpf(cpf)
+                if "erro" in resultado:
+                    return {"text": resultado["erro"], "buttons": menu_inicial}
+                nome = resultado["nome"]
+                boletos = resultado["boletos"]
+
+                linhas = []
+                botoes = []
+                for b in boletos:
+                    linhas.append(f"💳 **Título {b['titulo_id']}** — {money(b['valor'])} — Venc.: {b['vencimento']}")
+                    botoes.append({
+                        "label": f"2ª via {b['titulo_id']}/{b['parcela_id']}",
+                        "action": f"segunda via {b['titulo_id']}/{b['parcela_id']}"
+                    })
+
+                return {"text": f"📋 Boletos em aberto para **{nome}:**\n\n" + "\n".join(linhas), "buttons": botoes}
+
             else:
                 del usuarios_contexto[msg.user]
-                return {
-                    "text": "⚠️ Tudo bem, digite o CPF correto (com ou sem formatação).",
-                    "buttons": [{"label": "Voltar", "action": "buscar_boletos_cpf"}]
-                }
+                return {"text": "⚠️ Tudo bem! Digite o CPF correto (com ou sem formatação).", "buttons": menu_inicial}
 
-        # === Segunda via de boletos ===
+        # === Buscar boletos ===
         if acao == "buscar_boletos_cpf":
             cpf_match = re.search(r'\d{11}|\d{3}\.\d{3}\.\d{3}-\d{2}', texto)
             if not cpf_match:
                 return {
                     "text": "💳 Para localizar seus boletos, digite o CPF do titular (com ou sem formatação).",
-                    "buttons": [{"label": "🔙 Voltar", "action": "saudacao"}]
+                    "buttons": [{"label": "🔙 Voltar", "action": "saudacao"}],
                 }
 
             cpf = re.sub(r'\D', '', cpf_match.group(0))
@@ -168,10 +177,10 @@ async def mensagem(msg: Message):
                 "buttons": [
                     {"label": "✅ Sim, confirmar", "action": "confirmar"},
                     {"label": "❌ Não, digitei errado", "action": "buscar_boletos_cpf"},
-                ]
+                ],
             }
 
-        # === Link do boleto ===
+        # === Gerar link do boleto ===
         if acao == "link_boleto":
             titulo = parametros.get("titulo_id")
             parcela = parametros.get("parcela_id")
@@ -181,7 +190,7 @@ async def mensagem(msg: Message):
             msg_link = gerar_link_boleto(titulo, parcela)
             return {"text": msg_link, "buttons": menu_inicial}
 
-        # === Pedidos ===
+        # === Pedidos pendentes ===
         if acao == "listar_pedidos_pendentes":
             pedidos = listar_pedidos_pendentes()
             if not pedidos:
