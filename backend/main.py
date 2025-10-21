@@ -38,7 +38,7 @@ class Message(BaseModel):
     text: str
 
 # ============================================================
-# 💰 FUNÇÃO DE FORMATAÇÃO
+# 💰 FORMATADOR DE VALOR
 # ============================================================
 def money(v):
     try:
@@ -62,12 +62,18 @@ def entender_intencao(texto: str):
         return {"acao": "saudacao"}
 
     # === PEDIDOS ===
-    if any(k in t for k in ["pedidos pendentes", "listar pendentes"]):
+    if any(k in t for k in ["pedidos pendentes", "listar pendentes", "listar_pedidos_pendentes"]):
         return {"acao": "listar_pedidos_pendentes"}
 
-    if "itens do pedido" in t:
-        pid = next((p for p in t.split() if p.isdigit()), None)
-        return {"acao": "itens_pedido", "parametros": {"pedido_id": int(pid)}} if pid else {}
+    # Aceita várias formas para “itens do pedido”
+    m = (
+        re.search(r"\bitens(?:\s+do)?\s+pedido\s+(\d+)\b", t)
+        or re.search(r"\bitens\s+(\d+)\b", t)
+        or re.search(r"\bpedido\s+(\d+)\s+itens\b", t)
+        or re.search(r"\bver\s+itens\s+(\d+)\b", t)
+    )
+    if m:
+        return {"acao": "itens_pedido", "parametros": {"pedido_id": int(m.group(1))}}
 
     if "autorizar pedido" in t:
         pid = next((p for p in t.split() if p.isdigit()), None)
@@ -77,7 +83,7 @@ def entender_intencao(texto: str):
         pid = next((p for p in t.split() if p.isdigit()), None)
         return {"acao": "reprovar_pedido", "parametros": {"pedido_id": int(pid)}} if pid else {}
 
-    if "pdf" in t or "relatório" in t:
+    if "pdf" in t or "relatório" in t or "relatorio" in t:
         pid = next((p for p in t.split() if p.isdigit()), None)
         return {"acao": "relatorio_pdf", "parametros": {"pedido_id": int(pid)}} if pid else {}
 
@@ -128,9 +134,7 @@ async def mensagem(msg: Message):
                 nome = usuarios_contexto[msg.user]["nome"]
                 del usuarios_contexto[msg.user]
 
-                logging.info(f"✅ CPF confirmado: {cpf} ({nome})")
                 resultado = buscar_boletos_por_cpf(cpf)
-
                 if "erro" in resultado:
                     return {"text": resultado["erro"], "buttons": menu_inicial}
 
@@ -148,7 +152,6 @@ async def mensagem(msg: Message):
                     })
 
                 return {"text": f"📋 Boletos em aberto para **{nome}:**\n\n" + "\n".join(linhas), "buttons": botoes}
-
             else:
                 del usuarios_contexto[msg.user]
                 return {"text": "⚠️ Tudo bem! Digite o CPF novamente.", "buttons": menu_inicial}
@@ -199,7 +202,7 @@ async def mensagem(msg: Message):
             linhas = [f"• Pedido {p['id']} — {money(p.get('totalAmount'))}" for p in pedidos]
             return {"text": "📋 Pedidos pendentes:\n\n" + "\n".join(linhas), "buttons": menu_inicial}
 
-        # === ITENS DO PEDIDO === ✅
+        # === ITENS DO PEDIDO (corrigido) ===
         if acao == "itens_pedido":
             pedido_id = parametros.get("pedido_id")
             if not pedido_id:
@@ -209,10 +212,20 @@ async def mensagem(msg: Message):
             if not itens:
                 return {"text": f"📭 Nenhum item encontrado para o pedido {pedido_id}.", "buttons": menu_inicial}
 
-            linhas = [
-                f"• {i['description']} — {i['quantity']} {i['unit']} — {money(i['totalAmount'])}"
-                for i in itens
-            ]
+            linhas = []
+            for i in itens:
+                descricao = (
+                    i.get("description")
+                    or i.get("itemDescription")
+                    or i.get("productDescription")
+                    or i.get("materialDescription")
+                    or i.get("name")
+                    or "Item sem descrição"
+                )
+                quantidade = i.get("quantity", 0)
+                unidade = i.get("unit", "")
+                valor = i.get("totalAmount", 0)
+                linhas.append(f"• {descricao} — {quantidade} {unidade} — {money(valor)}")
 
             return {
                 "text": f"📦 Itens do pedido {pedido_id}:\n\n" + "\n".join(linhas),
@@ -222,7 +235,7 @@ async def mensagem(msg: Message):
                 ],
             }
 
-        # === RESPOSTA PADRÃO ===
+        # === PADRÃO ===
         return {"text": "🤖 Não entendi o comando.", "buttons": menu_inicial}
 
     except Exception as e:
