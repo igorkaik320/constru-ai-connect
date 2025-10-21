@@ -3,7 +3,7 @@ import logging
 from base64 import b64encode
 
 # 🚀 Identificação da versão atual
-logging.warning("🚀 Rodando versão 1.4 do sienge_boletos.py (sem cache de boletos)")
+logging.warning("🚀 Rodando versão 1.5 do sienge_boletos.py (log detalhado de boletos)")
 
 # ============================================================
 # 🔐 CONFIGURAÇÕES DE AUTENTICAÇÃO SIENGE
@@ -68,23 +68,25 @@ def listar_parcelas(titulo_id: int):
 
 
 # ============================================================
-# 🧠 VERIFICAÇÃO DE SEGUNDA VIA (SEM CACHE)
+# 🧠 VERIFICAÇÃO DE SEGUNDA VIA (LOG DETALHADO)
 # ============================================================
 def boleto_existe(titulo_id: int, parcela_id: int) -> bool:
-    """Verifica se existe segunda via real para essa parcela (sem cache)."""
+    """Verifica se existe segunda via real para essa parcela (sem cache, com log detalhado)."""
     url = f"{BASE_URL}/payment-slip-notification"
     params = {"billReceivableId": titulo_id, "installmentId": parcela_id}
 
     try:
         r = requests.get(url, headers=json_headers, params=params, timeout=20)
         logging.info(f"🔎 Verificando boleto: {params} -> {r.status_code}")
+        logging.info(f"Resposta: {r.text[:400]}")  # Mostra primeiros 400 caracteres do retorno
 
         if r.status_code == 200:
             data = r.json()
             results = data.get("results") or []
             if results and results[0].get("urlReport"):
-                logging.info("🟢 Segunda via encontrada!")
+                logging.info(f"🟢 Segunda via encontrada -> {results[0].get('urlReport')}")
                 return True
+
         logging.info("🔴 Segunda via não encontrada.")
     except Exception as e:
         logging.error(f"Erro ao verificar boleto ({titulo_id}/{parcela_id}): {e}")
@@ -128,9 +130,12 @@ def buscar_boletos_por_cpf(cpf: str):
             if not parcela_id:
                 continue
 
-            logging.info(f"🔎 Testando boleto título={titulo_id} parcela={parcela_id}")
+            logging.info(f"🔍 Testando boleto título={titulo_id}, parcela={parcela_id}, valor={p.get('amount')}")
 
-            if not boleto_existe(titulo_id, parcela_id):
+            existe = boleto_existe(titulo_id, parcela_id)
+            logging.info(f"Resultado da verificação -> {'🟢 Existe' if existe else '🔴 Não existe'}")
+
+            if not existe:
                 continue
 
             lista.append({
@@ -161,6 +166,7 @@ def gerar_link_boleto(titulo_id: int, parcela_id: int) -> str:
     logging.info(f"GET {url} -> params={params}")
     r = requests.get(url, headers=json_headers, params=params, timeout=30)
     logging.info(f"{url} -> {r.status_code}")
+    logging.info(f"Resposta: {r.text[:400]}")
 
     if r.status_code == 200:
         try:
