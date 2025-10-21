@@ -70,12 +70,15 @@ const Index = () => {
     }
   };
 
-  // Ações (botões da IA)
+  // ✅ Corrigido: evita concatenar undefined
   const handleAction = (pedidoId: number, acao: string) => {
-    sendMessage(`${acao} ${pedidoId}`);
+    if (pedidoId && pedidoId !== 0) {
+      sendMessage(`${acao} ${pedidoId}`);
+    } else {
+      sendMessage(acao);
+    }
   };
 
-  // Sugestões iniciais
   const handleSuggestion = (text: string) => {
     sendMessage(text);
   };
@@ -105,17 +108,19 @@ const Index = () => {
                   Envie uma mensagem para começar ou use um dos atalhos abaixo:
                 </p>
                 <div className="flex flex-wrap justify-center gap-2">
-                  {["pedidos pendentes", "itens do pedido 123", "autorizar pedido 101"].map(
-                    (sugestao, i) => (
-                      <button
-                        key={i}
-                        onClick={() => handleSuggestion(sugestao)}
-                        className="px-3 py-1.5 text-sm rounded-lg bg-gradient-to-r from-purple-500 to-blue-500 text-white hover:opacity-90 transition"
-                      >
-                        {sugestao}
-                      </button>
-                    )
-                  )}
+                  {[
+                    "pedidos pendentes",
+                    "itens do pedido 123",
+                    "autorizar pedido 101",
+                  ].map((sugestao, i) => (
+                    <button
+                      key={i}
+                      onClick={() => handleSuggestion(sugestao)}
+                      className="px-3 py-1.5 text-sm rounded-lg bg-gradient-to-r from-purple-500 to-blue-500 text-white hover:opacity-90 transition"
+                    >
+                      {sugestao}
+                    </button>
+                  ))}
                 </div>
               </div>
             ) : (
@@ -127,7 +132,7 @@ const Index = () => {
                     onAction={handleAction}
                   />
 
-                  {/* Botão de download do PDF gerado (quando vier em base64) */}
+                  {/* PDF gerado */}
                   {m.pdf_base64 && (
                     <a
                       href={`data:application/pdf;base64,${m.pdf_base64}`}
