@@ -4,6 +4,7 @@ from pydantic import BaseModel
 import logging
 import base64
 import re
+import time
 
 # ====== IMPORTAÇÕES SIENGE ======
 from sienge.sienge_pedidos import (
@@ -60,9 +61,9 @@ def money(v):
 # 🧠 INTERPRETAÇÃO DE COMANDOS
 # ============================================================
 def entender_intencao(texto: str):
-    t = (texto or "").strip().lower()
+    t = (texto or "").strip().lower().replace("undefined", "").strip()
 
-    # === CASO VAZIO OU SAUDAÇÃO ===
+    # === SAUDAÇÃO ===
     if t in ["", "oi", "ola", "olá", "bom dia", "boa tarde", "boa noite"]:
         return {"acao": "saudacao"}
 
@@ -108,8 +109,9 @@ def entender_intencao(texto: str):
 # ============================================================
 @app.post("/mensagem")
 async def mensagem(msg: Message):
-    logging.info(f"📩 {msg.user} -> {msg.text}")
-    intencao = entender_intencao(msg.text or "")
+    texto_usuario = (msg.text or "").strip()
+    logging.info(f"📩 {msg.user} -> {texto_usuario}")
+    intencao = entender_intencao(texto_usuario)
     logging.info(f"🧠 Interpretação -> {intencao}")
 
     acao = intencao.get("acao")
@@ -123,14 +125,16 @@ async def mensagem(msg: Message):
     ]
 
     try:
-        # === SAUDAÇÃO INICIAL ===
+        # === SAUDAÇÃO ===
         if acao == "saudacao":
             return {
-                "text": "👋 Olá! Como posso te ajudar hoje?\nEscolha uma das opções abaixo 👇",
+                "text": "👋 Olá! Seja bem-vindo à Constru.IA!\nComo posso te ajudar hoje?",
                 "buttons": menu_inicial,
             }
 
         # === PEDIDOS ===
+        if acao == "listar_pedidos_pendentes":
+            return {"text": "⏳ Buscando pedidos pendentes..."}
         if acao == "listar_pedidos_pendentes":
             pedidos = listar_pedidos_pendentes()
             if not pedidos:
@@ -156,7 +160,7 @@ async def mensagem(msg: Message):
             pdf_b64 = base64.b64encode(pdf_bytes).decode()
             return {"text": f"📄 PDF do pedido {pid} gerado com sucesso!", "pdf_base64": pdf_b64}
 
-        # === FLUXO DE BOLETOS ===
+        # === BOLETOS ===
         if acao == "iniciar_fluxo_boletos":
             return {
                 "text": "💳 Para localizar seus boletos, digite o CPF do titular (com ou sem formatação).",
@@ -165,6 +169,9 @@ async def mensagem(msg: Message):
 
         if acao == "buscar_boletos_cpf":
             cpf = parametros.get("texto", "")
+            logging.info(f"🔎 Buscando boletos para CPF {cpf}...")
+            # Mensagem temporária de carregamento
+            time.sleep(0.5)
             resultado = buscar_boletos_por_cpf(cpf)
             if "erro" in resultado:
                 return {"text": resultado["erro"], "buttons": menu_inicial}
@@ -190,6 +197,8 @@ async def mensagem(msg: Message):
             parcela = parametros.get("parcela_id")
             if not titulo or not parcela:
                 return {"text": "⚠️ Informe o título e parcela (ex: 2ª via 267/1)", "buttons": menu_inicial}
+
+            logging.info(f"🎟️ Gerando boleto para Título {titulo}/{parcela}")
             msg_link = gerar_link_boleto(titulo, parcela)
             return {"text": msg_link, "buttons": menu_inicial}
 
