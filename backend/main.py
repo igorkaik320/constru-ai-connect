@@ -56,12 +56,12 @@ def money(v):
         return "R$ 0,00"
 
 # ============================================================
-# 🧠 CONTEXTO DE USUÁRIOS TEMPORÁRIO (para confirmação de CPF)
+# 🧠 CONTEXTO TEMPORÁRIO DE USUÁRIOS (para confirmação de CPF)
 # ============================================================
 usuarios_contexto = {}
 
 # ============================================================
-# 🧠 INTERPRETAÇÃO DE COMANDOS (NLU SIMPLES)
+# 🧠 INTERPRETAÇÃO DE COMANDOS (NLU)
 # ============================================================
 def entender_intencao(texto: str):
     t = (texto or "").strip().lower()
@@ -95,8 +95,11 @@ def entender_intencao(texto: str):
         nums = re.findall(r"\d+", t)
         if len(nums) >= 2:
             return {"acao": "link_boleto", "parametros": {"titulo_id": int(nums[-2]), "parcela_id": int(nums[-1])}}
-        else:
-            return {"acao": "buscar_boletos_cpf", "parametros": {"texto": t}}
+        return {"acao": "buscar_boletos_cpf"}
+
+    # === DETECÇÃO AUTOMÁTICA DE CPF ===
+    if re.search(r'\d{11}|\d{3}\.\d{3}\.\d{3}-\d{2}', t):
+        return {"acao": "cpf_digitado", "parametros": {"cpf": t}}
 
     return {"acao": None}
 
@@ -105,20 +108,21 @@ def entender_intencao(texto: str):
 # ============================================================
 @app.post("/mensagem")
 async def mensagem(msg: Message):
-    logging.info("📩 Mensagem recebida: %s -> %s", msg.user, msg.text)
+    logging.info(f"📩 Mensagem recebida: {msg.user} -> {msg.text}")
 
     texto = (msg.text or "").strip()
     intencao = entender_intencao(texto)
     acao = intencao.get("acao")
     parametros = intencao.get("parametros", {}) or {}
 
+    # === MENU INICIAL ===
     menu_inicial = [
         {"label": "📋 Pedidos Pendentes", "action": "listar_pedidos_pendentes"},
         {"label": "📄 Gerar PDF", "action": "relatorio_pdf"},
         {"label": "💳 Segunda Via de Boletos", "action": "buscar_boletos_cpf"},
     ]
 
-    # === Mensagem inicial ===
+    # === SAUDAÇÃO ===
     if not texto or acao == "saudacao":
         return {
             "text": "👋 Olá! Seja bem-vindo à Constru.IA.\nComo posso te ajudar hoje?",
@@ -128,44 +132,25 @@ async def mensagem(msg: Message):
     try:
         # === CONFIRMAÇÃO DE CPF ===
         if msg.user in usuarios_contexto and usuarios_contexto[msg.user].get("aguardando_confirmacao"):
-            if texto.lower() in ["sim", "confirmo", "confirmar", "ok"]:
+            if texto.lower() in ["sim", "confirmo", "ok", "confirmar"]:
                 cpf = usuarios_contexto[msg.user]["cpf"]
                 nome = usuarios_contexto[msg.user]["nome"]
                 del usuarios_contexto[msg.user]
+
                 logging.info(f"✅ CPF confirmado: {cpf} ({nome})")
-                resultado = buscar_boletos_por_cpf(cpf)
-                if "erro" in resultado:
-                    return {"text": resultado["erro"], "buttons": menu_inicial}
-                nome = resultado["nome"]
-                boletos = resultado["boletos"]
-
-                linhas = []
-                botoes = []
-                for b in boletos:
-                    linhas.append(f"💳 **Título {b['titulo_id']}** — {money(b['valor'])} — Venc.: {b['vencimento']}")
-                    botoes.append({
-                        "label": f"2ª via {b['titulo_id']}/{b['parcela_id']}",
-                        "action": f"segunda via {b['titulo_id']}/{b['parcela_id']}"
-                    })
-
-                return {"text": f"📋 Boletos em aberto para **{nome}:**\n\n" + "\n".join(linhas), "buttons": botoes}
+                return {"text": f"🔍 Buscando boletos de {nome}...", "loading": True}
 
             else:
                 del usuarios_contexto[msg.user]
-                return {"text": "⚠️ Tudo bem! Digite o CPF correto (com ou sem formatação).", "buttons": menu_inicial}
+                return {"text": "⚠️ Tudo bem! Digite o CPF novamente.", "buttons": menu_inicial}
 
-        # === Buscar boletos ===
-        if acao == "buscar_boletos_cpf":
-            cpf_match = re.search(r'\d{11}|\d{3}\.\d{3}\.\d{3}-\d{2}', texto)
-            if not cpf_match:
-                return {
-                    "text": "💳 Para localizar seus boletos, digite o CPF do titular (com ou sem formatação).",
-                    "buttons": [{"label": "🔙 Voltar", "action": "saudacao"}],
-                }
+        # === CPF DIGITADO ===
+        if acao == "cpf_digitado":
+            cpf = re.sub(r'\D', '', parametros.get("cpf", ""))
+            if len(cpf) != 11:
+                return {"text": "⚠️ CPF inválido. Digite novamente."}
 
-            cpf = re.sub(r'\D', '', cpf_match.group(0))
             resultado = buscar_boletos_por_cpf(cpf)
-
             if "erro" in resultado:
                 return {"text": resultado["erro"], "buttons": menu_inicial}
 
@@ -173,14 +158,21 @@ async def mensagem(msg: Message):
             usuarios_contexto[msg.user] = {"cpf": cpf, "nome": nome, "aguardando_confirmacao": True}
 
             return {
-                "text": f"🔍 Localizei o cliente *{nome}*.\nDeseja confirmar para buscar os boletos?",
+                "text": f"🔎 Localizei o cliente *{nome}*.\nDeseja confirmar para buscar os boletos?",
                 "buttons": [
                     {"label": "✅ Sim, confirmar", "action": "confirmar"},
                     {"label": "❌ Não, digitei errado", "action": "buscar_boletos_cpf"},
                 ],
             }
 
-        # === Gerar link do boleto ===
+        # === BUSCAR BOLETOS ===
+        if acao == "buscar_boletos_cpf":
+            return {
+                "text": "💳 Para localizar seus boletos, digite o CPF do titular (com ou sem formatação).",
+                "buttons": [{"label": "🔙 Voltar", "action": "saudacao"}],
+            }
+
+        # === LINK DE BOLETO ===
         if acao == "link_boleto":
             titulo = parametros.get("titulo_id")
             parcela = parametros.get("parcela_id")
@@ -190,12 +182,11 @@ async def mensagem(msg: Message):
             msg_link = gerar_link_boleto(titulo, parcela)
             return {"text": msg_link, "buttons": menu_inicial}
 
-        # === Pedidos pendentes ===
+        # === PEDIDOS PENDENTES ===
         if acao == "listar_pedidos_pendentes":
             pedidos = listar_pedidos_pendentes()
             if not pedidos:
                 return {"text": "📭 Nenhum pedido pendente de autorização encontrado.", "buttons": menu_inicial}
-
             linhas = [f"• Pedido {p['id']} — {money(p.get('totalAmount'))}" for p in pedidos]
             return {"text": "📋 Pedidos pendentes:\n\n" + "\n".join(linhas), "buttons": menu_inicial}
 
