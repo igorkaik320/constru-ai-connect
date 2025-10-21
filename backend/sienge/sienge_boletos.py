@@ -3,7 +3,6 @@ import logging
 from base64 import b64encode
 from functools import lru_cache
 
-
 # ============================================================
 # 🔐 CONFIGURAÇÕES DE AUTENTICAÇÃO SIENGE
 # ============================================================
@@ -19,7 +18,6 @@ json_headers = {
     "accept": "application/json",
     "Content-Type": "application/json",
 }
-
 
 # ============================================================
 # 👤 CLIENTE
@@ -91,7 +89,7 @@ def boleto_existe(titulo_id: int, parcela_id: int) -> bool:
 
 
 # ============================================================
-# 🔍 BUSCAR BOLETOS POR CPF (TESTA PARCELAS INDIVIDUALMENTE)
+# 🔍 BUSCAR BOLETOS POR CPF
 # ============================================================
 def buscar_boletos_por_cpf(cpf: str):
     """Busca apenas boletos realmente disponíveis para 2ª via."""
@@ -127,10 +125,9 @@ def buscar_boletos_por_cpf(cpf: str):
             if not parcela_id:
                 continue
 
-            # 🔍 Log detalhado da verificação
+            # 🔍 Log detalhado
             logging.info(f"🔎 Testando boleto título={titulo_id} parcela={parcela_id}")
 
-            # ✅ Verifica se o boleto realmente existe (API de segunda via)
             if not boleto_existe(titulo_id, parcela_id):
                 logging.info(f"🔴 Boleto NÃO disponível -> Título {titulo_id}, Parcela {parcela_id}")
                 continue
