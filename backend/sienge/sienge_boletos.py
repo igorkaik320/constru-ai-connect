@@ -1,18 +1,107 @@
-from typing import Dict, List, Any
-import logging
 import requests
+import logging
+import json
+from base64 import b64encode
+from functools import lru_cache
 
-# Imports das demais camadas do seu projeto
-from sienge.sienge_clientes import buscar_cliente_por_cpf
-from sienge.sienge_parcelas import listar_parcelas
-from sienge.sienge_titulos import listar_boletos_por_cliente, boleto_existe
 
-__all__ = ["buscar_boletos_por_cpf", "gerar_link_boleto"]
+# ============================================================
+# 🔐 CONFIGURAÇÕES GERAIS DA API SIENGE
+# ============================================================
+subdominio = "cctcontrol"
+usuario = "cctcontrol-api"
+senha = "9SQ2MaNrFOeZOOuOAqeSRy7bYWYDDf85"
 
-# ---------------------------------------------------------------------------
-# Busca boletos disponíveis por CPF (mantida exatamente como você enviou)
-# ---------------------------------------------------------------------------
+BASE_URL = f"https://api.sienge.com.br/{subdominio}/public/api/v1"
 
+# Autenticação básica
+_token = b64encode(f"{usuario}:{senha}".encode()).decode()
+
+json_headers = {
+    "Authorization": f"Basic {_token}",
+    "accept": "application/json",
+    "Content-Type": "application/json",
+}
+
+
+# ============================================================
+# 👤 CLIENTE
+# ============================================================
+def buscar_cliente_por_cpf(cpf: str):
+    """Busca cliente no Sienge pelo CPF"""
+    url = f"{BASE_URL}/customers?cpf={cpf}"
+    logging.info(f"GET {url}")
+
+    r = requests.get(url, headers=json_headers, timeout=30)
+    logging.info(f"{url} -> {r.status_code}")
+
+    if r.status_code != 200:
+        logging.warning("Erro ao buscar cliente: %s", r.text)
+        return None
+
+    data = r.json()
+    results = data.get("results") or data
+    if isinstance(results, list) and len(results) > 0:
+        return results[0]
+
+    return None
+
+
+# ============================================================
+# 🧾 BOLETOS
+# ============================================================
+def listar_boletos_por_cliente(cliente_id: int):
+    """Lista boletos vinculados a um cliente"""
+    url = f"{BASE_URL}/accounts-receivable/receivable-bills?customerId={cliente_id}"
+    r = requests.get(url, headers=json_headers, timeout=30)
+    logging.info(f"GET {url} -> {r.status_code}")
+
+    if r.status_code != 200:
+        return []
+    return r.json().get("results") or []
+
+
+def listar_parcelas(titulo_id: int):
+    """Lista parcelas de um título"""
+    if not titulo_id:
+        return []
+
+    url = f"{BASE_URL}/accounts-receivable/receivable-bills/{titulo_id}/installments"
+    r = requests.get(url, headers=json_headers, timeout=30)
+    logging.info(f"GET {url} -> {r.status_code}")
+
+    if r.status_code != 200:
+        return []
+
+    return r.json().get("results") or []
+
+
+# ============================================================
+# 🧠 VERIFICAÇÃO DE SEGUNDA VIA
+# ============================================================
+@lru_cache(maxsize=100)
+def boleto_existe(titulo_id: int, parcela_id: int) -> bool:
+    """Verifica se existe segunda via real para essa parcela"""
+    url = f"{BASE_URL}/payment-slip-notification"
+    params = {"billReceivableId": titulo_id, "installmentId": parcela_id}
+
+    r = requests.get(url, headers=json_headers, params=params, timeout=20)
+    logging.info(f"🔎 Verificando boleto: {params} -> {r.status_code}")
+
+    if r.status_code == 200:
+        try:
+            data = r.json()
+            results = data.get("results") or []
+            if results and results[0].get("urlReport"):
+                return True
+        except Exception:
+            pass
+    return False
+
+
+# ============================================================
+# 🔍 BUSCAR BOLETOS POR CPF
+# ============================================================
 def buscar_boletos_por_cpf(cpf: str):
     """Busca apenas boletos realmente disponíveis para 2ª via."""
     cliente = buscar_cliente_por_cpf(cpf)
@@ -73,72 +162,36 @@ def buscar_boletos_por_cpf(cpf: str):
         "boletos": lista
     }
 
-# ---------------------------------------------------------------------------
-# Geração do link de segunda via do boleto
-# ---------------------------------------------------------------------------
 
-def gerar_link_boleto(titulo_id: int | str, parcela_id: int | str) -> str:
-    """
-    Gera o link de 2ª via para um título/parcela no endpoint público do Sienge CCT Control.
+# ============================================================
+# 🔗 GERAR LINK DA SEGUNDA VIA
+# ============================================================
+def gerar_link_boleto(titulo_id: int, parcela_id: int) -> str:
+    """Gera link da segunda via do boleto"""
+    url = f"{BASE_URL}/payment-slip-notification"
+    params = {"billReceivableId": titulo_id, "installmentId": parcela_id}
 
-    Retorna uma string pronta para exibir no chat:
-      - "🔗 Segunda via disponível: <URL>"
-      - ou uma mensagem de erro amigável.
-    """
-    try:
-        # Garante que conseguimos logar corretamente os IDs
+    logging.info(f"GET {url} -> params={params}")
+    r = requests.get(url, headers=json_headers, params=params, timeout=30)
+    logging.info(f"{url} -> {r.status_code}")
+
+    if r.status_code == 200:
         try:
-            t_id = int(titulo_id)
-            p_id = int(parcela_id)
-        except Exception:
-            # Se não der para converter, segue com o valor original,
-            # mas registra o alerta.
-            logging.warning(f"IDs não numéricos recebidos: titulo_id={titulo_id}, parcela_id={parcela_id}")
-            t_id = titulo_id
-            p_id = parcela_id
+            data = r.json()
+            results = data.get("results") or data.get("data") or []
+            if results and isinstance(results, list):
+                result = results[0]
+                link = result.get("urlReport")
+                linha_digitavel = result.get("digitableNumber")
 
-        url = (
-            "https://api.sienge.com.br/cctcontrol/public/api/v1/"
-            f"accounts-receivable/receivable-bills/{t_id}/installments/{p_id}/link"
-        )
-        logging.info(f"🔗 Gerando link do boleto: {url}")
+                if link:
+                    return (
+                        f"📄 **Segunda via gerada com sucesso!**\n"
+                        f"🔗 [Clique aqui para abrir o boleto]({link})\n"
+                        f"💳 **Linha digitável:** `{linha_digitavel}`"
+                    )
+        except Exception as e:
+            logging.exception("Erro ao processar resposta do boleto:")
+            return f"❌ Erro ao processar boleto: {e}"
 
-        # Timeout curto para evitar travar no Render se a API não responder
-        resp = requests.get(url, timeout=15)
-
-        if resp.status_code != 200:
-            logging.error(f"❌ Erro ao gerar link ({resp.status_code}): {resp.text}")
-            return f"❌ Erro ao gerar link do boleto (status {resp.status_code})."
-
-        # Tenta extrair o link de diversos formatos possíveis
-        link = None
-        data: Any
-        try:
-            data = resp.json()
-            link = data.get("url") or data.get("link") or data.get("href")
-        except Exception:
-            # Caso venha texto puro
-            data = resp.text
-
-        if not link:
-            # Tenta heurística: procurar um http(s) na string de resposta
-            if isinstance(data, str):
-                import re as _re
-                m = _re.search(r"https?://\S+", data)
-                if m:
-                    link = m.group(0)
-
-        if link:
-            logging.info(f"🟢 Link do boleto gerado com sucesso: {link}")
-            return f"🔗 Segunda via disponível: {link}"
-
-        logging.warning(f"⚠️ Resposta sem link. Payload: {data}")
-        return "⚠️ Não foi possível obter o link do boleto."
-
-    except requests.Timeout:
-        logging.exception("Tempo esgotado ao chamar o endpoint de link do boleto.")
-        return "⏱️ Tempo esgotado ao gerar o link do boleto. Tente novamente."
-
-    except Exception as e:
-        logging.exception("Erro ao gerar link do boleto:")
-        return f"❌ Falha ao gerar link do boleto: {e}"
+    return f"❌ Erro ao gerar boleto ({r.status_code})."
