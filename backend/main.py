@@ -48,7 +48,7 @@ class Message(BaseModel):
     text: str
 
 # ============================================================
-# 💰 FORMATAÇÃO DE VALORES
+# 💰 FORMATADOR DE VALORES
 # ============================================================
 def money(v):
     try:
@@ -62,8 +62,12 @@ def money(v):
 def entender_intencao(texto: str):
     t = (texto or "").strip().lower()
 
+    # === MENU INICIAL ===
+    if t in ["menu", "início", "inicio"]:
+        return {"acao": "menu_inicial"}
+
     # === PEDIDOS ===
-    if any(k in t for k in ["pedidos pendentes", "listar pendentes", "listar_pedidos_pendentes"]):
+    if "pedidos pendentes" in t:
         return {"acao": "listar_pedidos_pendentes"}
 
     if "autorizar pedido" in t:
@@ -83,11 +87,15 @@ def entender_intencao(texto: str):
         return {"acao": "relatorio_pdf", "parametros": {"pedido_id": int(pid)}} if pid else {}
 
     # === BOLETOS ===
-    if "segunda via cpf" in t or "boleto cpf" in t:
+    if "segunda via" in t or "boletos" in t:
+        return {"acao": "iniciar_fluxo_boletos"}
+
+    # Caso o texto seja um CPF, o bot entende automaticamente
+    if re.search(r"\d{11}|\d{3}\.\d{3}\.\d{3}-\d{2}", t):
         return {"acao": "buscar_boletos_cpf", "parametros": {"texto": t}}
 
     # Exemplo: “2ª via 267/99” ou “gerar boleto 267 99”
-    if any(k in t for k in ["gerar boleto", "2ª via", "segunda via"]):
+    if any(k in t for k in ["gerar boleto", "2ª via", "segunda via", "link_boleto"]):
         nums = [int(n) for n in re.findall(r"\d+", t)]
         if len(nums) >= 2:
             return {"acao": "link_boleto", "parametros": {"titulo_id": nums[0], "parcela_id": nums[1]}}
@@ -108,12 +116,16 @@ async def mensagem(msg: Message):
     parametros = intencao.get("parametros", {}) or {}
 
     menu_inicial = [
-        {"label": "Pedidos Pendentes", "action": "listar_pedidos_pendentes"},
-        {"label": "Gerar PDF", "action": "relatorio_pdf"},
-        {"label": "Consultar Boletos por CPF", "action": "buscar_boletos_cpf"},
+        {"label": "🧾 Pedidos Pendentes", "action": "pedidos pendentes"},
+        {"label": "📄 Gerar PDF", "action": "gerar pdf"},
+        {"label": "💳 Segunda Via de Boletos", "action": "segunda via"},
     ]
 
     try:
+        # === MENU ===
+        if acao in ["menu_inicial", None] and msg.text.strip() == "":
+            return {"text": "👋 Olá! Como posso te ajudar hoje?", "buttons": menu_inicial}
+
         # === PEDIDOS ===
         if acao == "listar_pedidos_pendentes":
             pedidos = listar_pedidos_pendentes()
@@ -163,17 +175,24 @@ async def mensagem(msg: Message):
             pdf_b64 = base64.b64encode(pdf_bytes).decode()
             return {"text": f"📄 PDF do pedido {pid} gerado com sucesso!", "pdf_base64": pdf_b64}
 
-        # === BOLETOS ===
+        # === FLUXO DE BOLETOS ===
+        if acao == "iniciar_fluxo_boletos":
+            return {
+                "text": "👋 Olá! Para localizar seus boletos, por favor digite o CPF do titular.\n"
+                        "(Pode digitar com ou sem formatação 😉)",
+                "buttons": [{"label": "Voltar ao Menu", "action": "menu"}],
+            }
+
         if acao == "buscar_boletos_cpf":
             texto = parametros.get("texto", "")
-            cpf_match = re.search(r'\d{11}|\d{3}\.\d{3}\.\d{3}-\d{2}', texto)
+            cpf_match = re.search(r"\d{11}|\d{3}\.\d{3}\.\d{3}-\d{2}", texto)
             if not cpf_match:
                 return {"text": "🧾 Informe um CPF válido (ex: 123.456.789-00)."}
 
             cpf = re.sub(r'\D', '', cpf_match.group(0))
             resultado = buscar_boletos_por_cpf(cpf)
             if "erro" in resultado:
-                return {"text": resultado["erro"]}
+                return {"text": resultado["erro"], "buttons": menu_inicial}
 
             nome = resultado["nome"]
             boletos = resultado["boletos"]
@@ -181,20 +200,13 @@ async def mensagem(msg: Message):
             linhas = []
             botoes = []
             for b in boletos:
-                linhas.append(
-                    f"💳 **Título {b['titulo_id']}** — {money(b['valor'])} — Venc.: {b['vencimento']}"
-                )
+                linhas.append(f"💳 **Título {b['titulo_id']}** — {money(b['valor'])} — Venc.: {b['vencimento']}")
                 botoes.append({
                     "label": f"2ª via {b['titulo_id']}/{b['parcela_id']}",
-                    "action": "link_boleto",
-                    "titulo_id": b["titulo_id"],
-                    "parcela_id": b["parcela_id"],
+                    "action": f"2ª via {b['titulo_id']}/{b['parcela_id']}",
                 })
 
-            return {
-                "text": f"📋 Boletos em aberto para **{nome}:**\n\n" + "\n".join(linhas),
-                "buttons": botoes,
-            }
+            return {"text": f"📋 Boletos em aberto para **{nome}:**\n\n" + "\n".join(linhas), "buttons": botoes}
 
         if acao == "link_boleto":
             titulo = parametros.get("titulo_id")
@@ -205,6 +217,7 @@ async def mensagem(msg: Message):
             msg_link = gerar_link_boleto(titulo, parcela)
             return {"text": msg_link, "buttons": menu_inicial}
 
+        # === FALLBACK ===
         return {"text": "🤖 Não entendi o comando.", "buttons": menu_inicial}
 
     except Exception as e:
