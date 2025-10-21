@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import logging
 import re
+import base64
 
 from sienge.sienge_pedidos import (
     listar_pedidos_pendentes,
@@ -65,7 +66,6 @@ def entender_intencao(texto: str):
     if any(k in t for k in ["pedidos pendentes", "listar pendentes", "listar_pedidos_pendentes"]):
         return {"acao": "listar_pedidos_pendentes"}
 
-    # Aceita várias formas para “itens do pedido”
     m = (
         re.search(r"\bitens(?:\s+do)?\s+pedido\s+(\d+)\b", t)
         or re.search(r"\bitens\s+(\d+)\b", t)
@@ -112,14 +112,12 @@ async def mensagem(msg: Message):
     acao = intencao.get("acao")
     parametros = intencao.get("parametros", {}) or {}
 
-    # === MENU INICIAL ===
     menu_inicial = [
         {"label": "📋 Pedidos Pendentes", "action": "listar_pedidos_pendentes"},
         {"label": "📄 Gerar PDF", "action": "relatorio_pdf"},
         {"label": "💳 Segunda Via de Boletos", "action": "buscar_boletos_cpf"},
     ]
 
-    # === SAUDAÇÃO / MENU ===
     if not texto or acao == "saudacao":
         return {
             "text": "👋 Olá! Seja bem-vindo à Constru.IA.\nComo posso te ajudar hoje?",
@@ -200,17 +198,18 @@ async def mensagem(msg: Message):
             if not pedidos:
                 return {"text": "📭 Nenhum pedido pendente de autorização encontrado.", "buttons": menu_inicial}
             linhas = [f"• Pedido {p['id']} — {money(p.get('totalAmount'))}" for p in pedidos]
-            return {"text": "📋 Pedidos pendentes:\n\n" + "\n".join(linhas), "buttons": menu_inicial}
+            botoes = [{"label": f"Itens do pedido {p['id']}", "action": f"itens do pedido {p['id']}"} for p in pedidos]
+            return {"text": "📋 Pedidos pendentes:\n\n" + "\n".join(linhas), "buttons": botoes}
 
-        # === ITENS DO PEDIDO (corrigido) ===
+        # === ITENS DO PEDIDO ===
         if acao == "itens_pedido":
             pedido_id = parametros.get("pedido_id")
             if not pedido_id:
-                return {"text": "⚠️ Informe o número do pedido. Exemplo: itens do pedido 278", "buttons": menu_inicial}
+                return {"text": "⚠️ Informe o número do pedido. Exemplo: itens do pedido 278"}
 
             itens = itens_pedido(pedido_id)
             if not itens:
-                return {"text": f"📭 Nenhum item encontrado para o pedido {pedido_id}.", "buttons": menu_inicial}
+                return {"text": f"📭 Nenhum item encontrado para o pedido {pedido_id}."}
 
             linhas = []
             for i in itens:
@@ -230,12 +229,41 @@ async def mensagem(msg: Message):
             return {
                 "text": f"📦 Itens do pedido {pedido_id}:\n\n" + "\n".join(linhas),
                 "buttons": [
+                    {"label": "✅ Autorizar", "action": f"autorizar pedido {pedido_id}"},
+                    {"label": "❌ Reprovar", "action": f"reprovar pedido {pedido_id}"},
                     {"label": "📄 Gerar PDF", "action": f"gerar pdf pedido {pedido_id}"},
-                    {"label": "🔙 Voltar", "action": "listar_pedidos_pendentes"},
                 ],
             }
 
-        # === PADRÃO ===
+        # === AUTORIZAR PEDIDO ===
+        if acao == "autorizar_pedido":
+            pid = parametros.get("pedido_id")
+            resposta = autorizar_pedido(pid)
+            return {"text": resposta, "buttons": menu_inicial}
+
+        # === REPROVAR PEDIDO ===
+        if acao == "reprovar_pedido":
+            pid = parametros.get("pedido_id")
+            resposta = reprovar_pedido(pid)
+            return {"text": resposta, "buttons": menu_inicial}
+
+        # === GERAR PDF ===
+        if acao == "relatorio_pdf":
+            pid = parametros.get("pedido_id")
+            if not pid:
+                return {"text": "⚠️ Informe o número do pedido. Exemplo: gerar pdf pedido 123"}
+
+            pdf_bytes = gerar_relatorio_pdf_bytes(pid)
+            if not pdf_bytes:
+                return {"text": "⚠️ Erro ao gerar o PDF do pedido."}
+
+            pdf_base64 = base64.b64encode(pdf_bytes).decode("utf-8")
+            return {
+                "text": f"📄 PDF do pedido {pid} gerado com sucesso!",
+                "pdf_base64": pdf_base64,
+                "filename": f"pedido_{pid}.pdf",
+            }
+
         return {"text": "🤖 Não entendi o comando.", "buttons": menu_inicial}
 
     except Exception as e:
