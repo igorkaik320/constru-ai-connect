@@ -2,7 +2,6 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import logging
-import base64
 import re
 
 from sienge.sienge_pedidos import (
@@ -11,10 +10,6 @@ from sienge.sienge_pedidos import (
     autorizar_pedido,
     reprovar_pedido,
     gerar_relatorio_pdf_bytes,
-    buscar_pedido_por_id,
-    buscar_obra,
-    buscar_centro_custo,
-    buscar_fornecedor,
 )
 from sienge.sienge_boletos import (
     buscar_boletos_por_cpf,
@@ -22,13 +17,9 @@ from sienge.sienge_boletos import (
 )
 
 # ============================================================
-# 🔧 CONFIGURAÇÃO DE LOG
+# ⚙️ CONFIGURAÇÕES GERAIS
 # ============================================================
 logging.basicConfig(level=logging.INFO)
-
-# ============================================================
-# 🚀 INICIALIZAÇÃO DO FASTAPI
-# ============================================================
 app = FastAPI()
 
 app.add_middleware(
@@ -47,7 +38,7 @@ class Message(BaseModel):
     text: str
 
 # ============================================================
-# 💰 FUNÇÃO UTILITÁRIA
+# 💰 FUNÇÃO DE FORMATAÇÃO
 # ============================================================
 def money(v):
     try:
@@ -61,7 +52,7 @@ def money(v):
 usuarios_contexto = {}
 
 # ============================================================
-# 🧠 INTERPRETAÇÃO DE COMANDOS (NLU)
+# 🧠 INTERPRETAÇÃO DE COMANDOS
 # ============================================================
 def entender_intencao(texto: str):
     t = (texto or "").strip().lower()
@@ -74,6 +65,10 @@ def entender_intencao(texto: str):
     if any(k in t for k in ["pedidos pendentes", "listar pendentes"]):
         return {"acao": "listar_pedidos_pendentes"}
 
+    if "itens do pedido" in t:
+        pid = next((p for p in t.split() if p.isdigit()), None)
+        return {"acao": "itens_pedido", "parametros": {"pedido_id": int(pid)}} if pid else {}
+
     if "autorizar pedido" in t:
         pid = next((p for p in t.split() if p.isdigit()), None)
         return {"acao": "autorizar_pedido", "parametros": {"pedido_id": int(pid)}} if pid else {}
@@ -81,10 +76,6 @@ def entender_intencao(texto: str):
     if "reprovar pedido" in t:
         pid = next((p for p in t.split() if p.isdigit()), None)
         return {"acao": "reprovar_pedido", "parametros": {"pedido_id": int(pid)}} if pid else {}
-
-    if "itens do pedido" in t:
-        pid = next((p for p in t.split() if p.isdigit()), None)
-        return {"acao": "itens_pedido", "parametros": {"pedido_id": int(pid)}} if pid else {}
 
     if "pdf" in t or "relatório" in t:
         pid = next((p for p in t.split() if p.isdigit()), None)
@@ -122,7 +113,7 @@ async def mensagem(msg: Message):
         {"label": "💳 Segunda Via de Boletos", "action": "buscar_boletos_cpf"},
     ]
 
-    # === SAUDAÇÃO ===
+    # === SAUDAÇÃO / MENU ===
     if not texto or acao == "saudacao":
         return {
             "text": "👋 Olá! Seja bem-vindo à Constru.IA.\nComo posso te ajudar hoje?",
@@ -138,17 +129,12 @@ async def mensagem(msg: Message):
                 del usuarios_contexto[msg.user]
 
                 logging.info(f"✅ CPF confirmado: {cpf} ({nome})")
-
-                # Mostra mensagem de busca
-                logging.info("🕓 Iniciando busca de boletos...")
                 resultado = buscar_boletos_por_cpf(cpf)
 
                 if "erro" in resultado:
                     return {"text": resultado["erro"], "buttons": menu_inicial}
 
-                nome = resultado["nome"]
-                boletos = resultado["boletos"]
-
+                boletos = resultado.get("boletos", [])
                 if not boletos:
                     return {"text": f"📭 Nenhum boleto em aberto encontrado para {nome}.", "buttons": menu_inicial}
 
@@ -213,6 +199,30 @@ async def mensagem(msg: Message):
             linhas = [f"• Pedido {p['id']} — {money(p.get('totalAmount'))}" for p in pedidos]
             return {"text": "📋 Pedidos pendentes:\n\n" + "\n".join(linhas), "buttons": menu_inicial}
 
+        # === ITENS DO PEDIDO === ✅
+        if acao == "itens_pedido":
+            pedido_id = parametros.get("pedido_id")
+            if not pedido_id:
+                return {"text": "⚠️ Informe o número do pedido. Exemplo: itens do pedido 278", "buttons": menu_inicial}
+
+            itens = itens_pedido(pedido_id)
+            if not itens:
+                return {"text": f"📭 Nenhum item encontrado para o pedido {pedido_id}.", "buttons": menu_inicial}
+
+            linhas = [
+                f"• {i['description']} — {i['quantity']} {i['unit']} — {money(i['totalAmount'])}"
+                for i in itens
+            ]
+
+            return {
+                "text": f"📦 Itens do pedido {pedido_id}:\n\n" + "\n".join(linhas),
+                "buttons": [
+                    {"label": "📄 Gerar PDF", "action": f"gerar pdf pedido {pedido_id}"},
+                    {"label": "🔙 Voltar", "action": "listar_pedidos_pendentes"},
+                ],
+            }
+
+        # === RESPOSTA PADRÃO ===
         return {"text": "🤖 Não entendi o comando.", "buttons": menu_inicial}
 
     except Exception as e:
