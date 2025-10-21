@@ -2,8 +2,10 @@ import requests
 import logging
 from base64 import b64encode
 
-# 🚀 Identificação da versão atual
-logging.warning("🚀 Rodando versão 1.7 do sienge_boletos.py (correção installmentId e log detalhado)")
+# ============================================================
+# 🚀 IDENTIFICAÇÃO DA VERSÃO
+# ============================================================
+logging.warning("🚀 Rodando versão 1.8 do sienge_boletos.py (parcelas extras e tratamento de erro interno)")
 
 # ============================================================
 # 🔐 CONFIGURAÇÕES DE AUTENTICAÇÃO SIENGE
@@ -80,6 +82,7 @@ def boleto_existe(titulo_id: int, parcela_id: int) -> bool:
         logging.info(f"🔎 Verificando boleto: {params} -> {r.status_code}")
         logging.info(f"Resposta: {r.text[:400]}")
 
+        # 200 = OK
         if r.status_code == 200:
             data = r.json()
             results = data.get("results") or []
@@ -87,14 +90,20 @@ def boleto_existe(titulo_id: int, parcela_id: int) -> bool:
                 logging.info(f"🟢 Segunda via encontrada -> {results[0].get('urlReport')}")
                 return True
 
-        logging.info("🔴 Segunda via não encontrada.")
+        # 422 = Erro de regra no Sienge
+        if r.status_code == 422:
+            if "RuntimeException" in r.text or "SiengeBusinessException" in r.text:
+                logging.warning(f"⚠️ Erro interno no Sienge ao tentar gerar boleto ({titulo_id}/{parcela_id})")
+            else:
+                logging.info("🔴 Nenhuma segunda via disponível para essa parcela.")
+
     except Exception as e:
         logging.error(f"Erro ao verificar boleto ({titulo_id}/{parcela_id}): {e}")
     return False
 
 
 # ============================================================
-# 🔍 BUSCAR BOLETOS POR CPF (CORRIGIDO COM installmentId)
+# 🔍 BUSCAR BOLETOS POR CPF (CORRIGIDO E APRIMORADO)
 # ============================================================
 def buscar_boletos_por_cpf(cpf: str):
     """Busca apenas boletos realmente disponíveis para 2ª via (com logs detalhados)."""
@@ -135,14 +144,13 @@ def buscar_boletos_por_cpf(cpf: str):
         for p in parcelas:
             logging.info(f"🧩 Parcela -> {p}")
 
-            # ✅ Correção: usa installmentId se o campo id não existir
+            # ✅ Usa o campo installmentId como ID principal
             parcela_id = p.get("id") or p.get("installmentId")
             if not parcela_id:
                 logging.info("⚠️ Parcela sem ID, ignorada")
                 continue
 
             logging.info(f"🔍 Testando boleto título={titulo_id}, parcela={parcela_id}, valor={p.get('balanceDue')}")
-
             existe = boleto_existe(titulo_id, parcela_id)
             logging.info(f"Resultado da verificação -> {'🟢 Existe' if existe else '🔴 Não existe'}")
 
@@ -156,6 +164,20 @@ def buscar_boletos_por_cpf(cpf: str):
                 "valor": p.get("balanceDue") or valor,
                 "vencimento": p.get("dueDate") or emissao,
             })
+
+        # 🔍 Checagem extra para parcelas conhecidas (Sienge às vezes omite)
+        parcelas_extras = [56, 99]
+        for extra_id in parcelas_extras:
+            logging.info(f"🔄 Tentando verificar parcela extra manual: {extra_id} (título {titulo_id})")
+            existe = boleto_existe(titulo_id, extra_id)
+            if existe:
+                lista.append({
+                    "titulo_id": titulo_id,
+                    "parcela_id": extra_id,
+                    "descricao": desc,
+                    "valor": valor,
+                    "vencimento": emissao,
+                })
 
     if not lista:
         return {"erro": f"📭 Nenhum boleto disponível para segunda via de {nome}."}
@@ -198,5 +220,8 @@ def gerar_link_boleto(titulo_id: int, parcela_id: int) -> str:
         except Exception as e:
             logging.exception("Erro ao processar resposta do boleto:")
             return f"❌ Erro ao processar boleto: {e}"
+
+    elif r.status_code == 422:
+        return "⚠️ O Sienge retornou erro interno ao tentar gerar o boleto. Verifique se há dados inconsistentes no título."
 
     return f"❌ Erro ao gerar boleto ({r.status_code})."
