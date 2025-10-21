@@ -1,189 +1,213 @@
-import requests
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 import logging
-from base64 import b64encode
-from functools import lru_cache
+import base64
+import re
 
-# 🚀 Identificação da versão atual
-logging.warning("🚀 Rodando versão 1.3 do sienge_boletos.py (com verificação de segunda via)")
-
-# ============================================================
-# 🔐 CONFIGURAÇÕES DE AUTENTICAÇÃO SIENGE
-# ============================================================
-subdominio = "cctcontrol"
-usuario = "cctcontrol-api"
-senha = "9SQ2MaNrFOeZOOuOAqeSRy7bYWYDDf85"
-
-BASE_URL = f"https://api.sienge.com.br/{subdominio}/public/api/v1"
-_token = b64encode(f"{usuario}:{senha}".encode()).decode()
-
-json_headers = {
-    "Authorization": f"Basic {_token}",
-    "accept": "application/json",
-    "Content-Type": "application/json",
-}
+from sienge.sienge_pedidos import (
+    listar_pedidos_pendentes,
+    itens_pedido,
+    autorizar_pedido,
+    reprovar_pedido,
+    gerar_relatorio_pdf_bytes,
+    buscar_pedido_por_id,
+    buscar_obra,
+    buscar_centro_custo,
+    buscar_fornecedor,
+)
+from sienge.sienge_boletos import (
+    buscar_boletos_por_cpf,
+    gerar_link_boleto,
+)
 
 # ============================================================
-# 👤 CLIENTE
+# 🔧 CONFIGURAÇÃO DE LOG
 # ============================================================
-def buscar_cliente_por_cpf(cpf: str):
-    """Busca cliente no Sienge pelo CPF."""
-    url = f"{BASE_URL}/customers?cpf={cpf}"
-    logging.info(f"GET {url}")
-    r = requests.get(url, headers=json_headers, timeout=30)
-    logging.info(f"{url} -> {r.status_code}")
-
-    if r.status_code != 200:
-        logging.warning("Erro ao buscar cliente: %s", r.text)
-        return None
-
-    data = r.json()
-    results = data.get("results") or data
-    if isinstance(results, list) and len(results) > 0:
-        return results[0]
-    return None
-
+logging.basicConfig(level=logging.INFO)
 
 # ============================================================
-# 🧾 BOLETOS / TÍTULOS
+# 🚀 INICIALIZAÇÃO DO FASTAPI
 # ============================================================
-def listar_boletos_por_cliente(cliente_id: int):
-    """Lista boletos/títulos vinculados a um cliente."""
-    url = f"{BASE_URL}/accounts-receivable/receivable-bills?customerId={cliente_id}"
-    r = requests.get(url, headers=json_headers, timeout=30)
-    logging.info(f"GET {url} -> {r.status_code}")
-    if r.status_code != 200:
-        return []
-    return r.json().get("results") or []
+app = FastAPI()
 
-
-def listar_parcelas(titulo_id: int):
-    """Lista parcelas de um título."""
-    if not titulo_id:
-        return []
-    url = f"{BASE_URL}/accounts-receivable/receivable-bills/{titulo_id}/installments"
-    r = requests.get(url, headers=json_headers, timeout=30)
-    logging.info(f"GET {url} -> {r.status_code}")
-    if r.status_code != 200:
-        return []
-    return r.json().get("results") or []
-
+# ===== CORS =====
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # ============================================================
-# 🧠 VERIFICAÇÃO DE SEGUNDA VIA
+# 📬 MODELOS
 # ============================================================
-@lru_cache(maxsize=200)
-def boleto_existe(titulo_id: int, parcela_id: int) -> bool:
-    """Verifica se existe segunda via real para essa parcela."""
-    url = f"{BASE_URL}/payment-slip-notification"
-    params = {"billReceivableId": titulo_id, "installmentId": parcela_id}
+class Message(BaseModel):
+    user: str
+    text: str
+
+# ============================================================
+# 💰 FUNÇÃO UTILITÁRIA
+# ============================================================
+def money(v):
+    try:
+        return f"R$ {float(v):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+    except Exception:
+        return "R$ 0,00"
+
+# ============================================================
+# 🧠 INTERPRETAÇÃO DE COMANDOS (NLU SIMPLES)
+# ============================================================
+def entender_intencao(texto: str):
+    t = (texto or "").strip().lower()
+
+    # === PEDIDOS ===
+    if any(k in t for k in ["pedidos pendentes", "listar pendentes", "listar_pedidos_pendentes"]):
+        return {"acao": "listar_pedidos_pendentes", "parametros": {}}
+
+    if "autorizar pedido" in t:
+        pid = next((p for p in t.split() if p.isdigit()), None)
+        return {"acao": "autorizar_pedido", "parametros": {"pedido_id": int(pid)}} if pid else {}
+
+    if "reprovar pedido" in t:
+        pid = next((p for p in t.split() if p.isdigit()), None)
+        return {"acao": "reprovar_pedido", "parametros": {"pedido_id": int(pid)}} if pid else {}
+
+    if "itens do pedido" in t:
+        pid = next((p for p in t.split() if p.isdigit()), None)
+        return {"acao": "itens_pedido", "parametros": {"pedido_id": int(pid)}} if pid else {}
+
+    if "pdf" in t or "relatório" in t:
+        pid = next((p for p in t.split() if p.isdigit()), None)
+        return {"acao": "relatorio_pdf", "parametros": {"pedido_id": int(pid)}} if pid else {}
+
+    # === BOLETOS ===
+    if "segunda via cpf" in t or "boleto cpf" in t:
+        return {"acao": "buscar_boletos_cpf", "parametros": {"texto": t}}
+
+    if "gerar boleto" in t or "2ª via" in t or "segunda via" in t:
+        nums = [int(n) for n in re.findall(r"\d+", t)]
+        if len(nums) >= 2:
+            return {"acao": "link_boleto", "parametros": {"titulo_id": nums[0], "parcela_id": nums[1]}}
+
+    return {"acao": None}
+
+# ============================================================
+# 📨 ENDPOINT PRINCIPAL
+# ============================================================
+@app.post("/mensagem")
+async def mensagem(msg: Message):
+    logging.info("📩 Mensagem recebida: %s -> %s", msg.user, msg.text)
+
+    intencao = entender_intencao(msg.text or "")
+    logging.info("🧠 Interpretação IA -> %s", intencao)
+
+    acao = intencao.get("acao")
+    parametros = intencao.get("parametros", {}) or {}
+
+    menu_inicial = [
+        {"label": "Pedidos Pendentes", "action": "listar_pedidos_pendentes"},
+        {"label": "Gerar PDF", "action": "relatorio_pdf"},
+        {"label": "Consultar Boletos por CPF", "action": "buscar_boletos_cpf"},
+    ]
 
     try:
-        r = requests.get(url, headers=json_headers, params=params, timeout=20)
-        logging.info(f"🔎 Verificando boleto: {params} -> {r.status_code}")
+        # === PEDIDOS ===
+        if acao == "listar_pedidos_pendentes":
+            pedidos = listar_pedidos_pendentes()
+            if not pedidos:
+                return {"text": "📭 Nenhum pedido pendente de autorização encontrado.", "buttons": menu_inicial}
 
-        if r.status_code == 200:
-            data = r.json()
-            results = data.get("results") or []
-            if results and results[0].get("urlReport"):
-                return True
+            linhas = [f"• Pedido {p['id']} — {money(p.get('totalAmount'))}" for p in pedidos]
+            return {"text": "📋 Pedidos pendentes:\n\n" + "\n".join(linhas), "buttons": menu_inicial}
+
+        if acao == "itens_pedido":
+            pid = parametros.get("pedido_id")
+            if not pid:
+                return {"text": "Informe o número do pedido.", "buttons": menu_inicial}
+
+            pedido = buscar_pedido_por_id(pid)
+            if not pedido:
+                return {"text": f"❌ Pedido {pid} não encontrado.", "buttons": menu_inicial}
+
+            obra = buscar_obra(pedido.get("buildingId"))
+            cc = buscar_centro_custo(pedido.get("costCenterId"))
+            forn = buscar_fornecedor(pedido.get("supplierId"))
+
+            resumo = (
+                f"🧾 Pedido {pid}\n"
+                f"🏗️ Obra: {(obra or {}).get('description', '-')}\n"
+                f"💰 Centro de Custo: {(cc or {}).get('description', '-')}\n"
+                f"🤝 Fornecedor: {(forn or {}).get('name', '-')}\n"
+                f"💵 Total: {money(pedido.get('totalAmount'))}\n"
+            )
+            return {"text": resumo, "buttons": menu_inicial}
+
+        if acao == "autorizar_pedido":
+            pid = parametros.get("pedido_id")
+            ok = autorizar_pedido(pid)
+            return {"text": "✅ Pedido autorizado!" if ok else "❌ Falha ao autorizar.", "buttons": menu_inicial}
+
+        if acao == "reprovar_pedido":
+            pid = parametros.get("pedido_id")
+            ok = reprovar_pedido(pid)
+            return {"text": "🚫 Pedido reprovado!" if ok else "❌ Falha ao reprovar.", "buttons": menu_inicial}
+
+        if acao == "relatorio_pdf":
+            pid = parametros.get("pedido_id")
+            pdf_bytes = gerar_relatorio_pdf_bytes(pid)
+            if not pdf_bytes:
+                return {"text": "❌ Não foi possível gerar o PDF.", "buttons": menu_inicial}
+            pdf_b64 = base64.b64encode(pdf_bytes).decode()
+            return {"text": f"📄 PDF do pedido {pid} gerado com sucesso!", "pdf_base64": pdf_b64}
+
+        # === BOLETOS ===
+        if acao == "buscar_boletos_cpf":
+            texto = parametros.get("texto", "")
+            cpf_match = re.search(r'\d{11}|\d{3}\.\d{3}\.\d{3}-\d{2}', texto)
+            if not cpf_match:
+                return {"text": "🧾 Informe um CPF válido (ex: 123.456.789-00)."}
+
+            cpf = re.sub(r'\D', '', cpf_match.group(0))
+            resultado = buscar_boletos_por_cpf(cpf)
+            if "erro" in resultado:
+                return {"text": resultado["erro"]}
+
+            nome = resultado["nome"]
+            boletos = resultado["boletos"]
+
+            linhas = []
+            botoes = []
+            for b in boletos:
+                linhas.append(f"💳 **Título {b['titulo_id']}** — {money(b['valor'])} — Venc.: {b['vencimento']}")
+                botoes.append({
+                    "label": f"2ª via {b['titulo_id']}/{b['parcela_id']}",
+                    "action": "link_boleto",
+                    "titulo_id": b["titulo_id"],
+                    "parcela_id": b["parcela_id"]
+                })
+
+            return {"text": f"📋 Boletos em aberto para **{nome}:**\n\n" + "\n".join(linhas), "buttons": botoes}
+
+        if acao == "link_boleto":
+            titulo = parametros.get("titulo_id")
+            parcela = parametros.get("parcela_id")
+            if not titulo or not parcela:
+                return {"text": "⚠️ Informe o título e parcela (ex: 2ª via 267 1)", "buttons": menu_inicial}
+
+            msg_link = gerar_link_boleto(titulo, parcela)
+            return {"text": msg_link, "buttons": menu_inicial}
+
+        return {"text": "🤖 Não entendi o comando.", "buttons": menu_inicial}
+
     except Exception as e:
-        logging.error(f"Erro ao verificar boleto ({titulo_id}/{parcela_id}): {e}")
-    return False
-
-
-# ============================================================
-# 🔍 BUSCAR BOLETOS POR CPF
-# ============================================================
-def buscar_boletos_por_cpf(cpf: str):
-    """Busca apenas boletos realmente disponíveis para 2ª via."""
-    cliente = buscar_cliente_por_cpf(cpf)
-    if not cliente:
-        return {"erro": "❌ Nenhum cliente encontrado com esse CPF."}
-
-    nome = cliente.get("name")
-    cid = cliente.get("id")
-    logging.info(f"✅ Cliente encontrado: {nome} (ID {cid})")
-
-    boletos = listar_boletos_por_cliente(cid)
-    if not boletos:
-        return {"erro": f"📭 Nenhum boleto encontrado para {nome}."}
-
-    lista = []
-    for b in boletos:
-        titulo_id = b.get("id") or b.get("receivableBillId")
-        valor = b.get("amount") or b.get("receivableBillValue") or 0.0
-        desc = b.get("description") or b.get("documentNumber") or b.get("note") or "-"
-        emissao = b.get("issueDate")
-        quitado = b.get("payOffDate")
-
-        if quitado:
-            continue
-
-        parcelas = listar_parcelas(titulo_id)
-        if not parcelas:
-            continue
-
-        for p in parcelas:
-            parcela_id = p.get("id")
-            if not parcela_id:
-                continue
-
-            # 🔍 Log detalhado
-            logging.info(f"🔎 Testando boleto título={titulo_id} parcela={parcela_id}")
-
-            if not boleto_existe(titulo_id, parcela_id):
-                logging.info(f"🔴 Boleto NÃO disponível -> Título {titulo_id}, Parcela {parcela_id}")
-                continue
-
-            logging.info(f"🟢 Boleto DISPONÍVEL -> Título {titulo_id}, Parcela {parcela_id}")
-
-            lista.append({
-                "titulo_id": titulo_id,
-                "parcela_id": parcela_id,
-                "descricao": desc,
-                "valor": p.get("amount") or valor,
-                "vencimento": p.get("dueDate") or emissao,
-            })
-
-    if not lista:
-        return {"erro": f"📭 Nenhum boleto disponível para segunda via de {nome}."}
-
-    return {
-        "nome": nome,
-        "boletos": lista
-    }
-
+        logging.exception("Erro geral:")
+        return {"text": f"❌ Ocorreu um erro: {e}", "buttons": menu_inicial}
 
 # ============================================================
-# 🔗 GERAR LINK DO BOLETO (2ª VIA)
+# 🩺 HEALTH CHECK
 # ============================================================
-def gerar_link_boleto(titulo_id: int, parcela_id: int) -> str:
-    """Gera link da segunda via do boleto."""
-    url = f"{BASE_URL}/payment-slip-notification"
-    params = {"billReceivableId": titulo_id, "installmentId": parcela_id}
-
-    logging.info(f"GET {url} -> params={params}")
-    r = requests.get(url, headers=json_headers, params=params, timeout=30)
-    logging.info(f"{url} -> {r.status_code}")
-
-    if r.status_code == 200:
-        try:
-            data = r.json()
-            results = data.get("results") or []
-            if results and isinstance(results, list):
-                result = results[0]
-                link = result.get("urlReport")
-                linha_digitavel = result.get("digitableNumber")
-
-                if link:
-                    logging.info(f"🟢 Link do boleto gerado: {link}")
-                    return (
-                        f"📄 **Segunda via gerada com sucesso!**\n"
-                        f"🔗 [Clique aqui para abrir o boleto]({link})\n"
-                        f"💳 **Linha digitável:** `{linha_digitavel}`"
-                    )
-        except Exception as e:
-            logging.exception("Erro ao processar resposta do boleto:")
-            return f"❌ Erro ao processar boleto: {e}"
-
-    return f"❌ Erro ao gerar boleto ({r.status_code})."
+@app.get("/")
+def root():
+    return {"ok": True, "service": "constru-ai-connect", "status": "running"}
