@@ -5,6 +5,9 @@ import logging
 import re
 import base64
 
+# ============================================================
+# 🔗 IMPORTS EXISTENTES
+# ============================================================
 from sienge.sienge_pedidos import (
     listar_pedidos_pendentes,
     itens_pedido,
@@ -15,6 +18,11 @@ from sienge.sienge_pedidos import (
 from sienge.sienge_boletos import (
     buscar_boletos_por_cpf,
     gerar_link_boleto,
+)
+from sienge.sienge_financeiro import (
+    resumo_financeiro,
+    gastos_por_obra,
+    gastos_por_centro_custo,
 )
 
 # ============================================================
@@ -87,6 +95,16 @@ def entender_intencao(texto: str):
         pid = next((p for p in t.split() if p.isdigit()), None)
         return {"acao": "relatorio_pdf", "parametros": {"pedido_id": int(pid)}} if pid else {}
 
+    # === FINANCEIRO ===
+    if "financeiro" in t or "resultado" in t or "lucro" in t:
+        return {"acao": "resumo_financeiro"}
+
+    if "obra" in t and ("gasto" in t or "despesa" in t):
+        return {"acao": "gastos_por_obra"}
+
+    if "centro de custo" in t or "custos por centro" in t:
+        return {"acao": "gastos_por_centro_custo"}
+
     # === BOLETOS ===
     if "segunda via" in t or "boleto" in t:
         nums = re.findall(r"\d+", t)
@@ -116,6 +134,7 @@ async def mensagem(msg: Message):
         {"label": "📋 Pedidos Pendentes", "action": "listar_pedidos_pendentes"},
         {"label": "📄 Gerar PDF", "action": "relatorio_pdf"},
         {"label": "💳 Segunda Via de Boletos", "action": "buscar_boletos_cpf"},
+        {"label": "💰 Resumo Financeiro", "action": "resumo_financeiro"},
     ]
 
     if not texto or acao == "saudacao":
@@ -264,6 +283,39 @@ async def mensagem(msg: Message):
                 "filename": f"pedido_{pid}.pdf",
             }
 
+        # === FINANCEIRO: RESUMO GERAL ===
+        if acao == "resumo_financeiro":
+            r = resumo_financeiro()
+            if "erro" in r:
+                return {"text": f"❌ {r['erro']}", "buttons": menu_inicial}
+            return {
+                "text": (
+                    f"📊 **Resumo Financeiro**\n\n"
+                    f"🗓️ Período: {r['periodo']}\n"
+                    f"💸 A pagar: {money(r['a_pagar'])}\n"
+                    f"💰 A receber: {money(r['a_receber'])}\n"
+                    f"📈 Lucro: {money(r['lucro'])}"
+                ),
+                "buttons": menu_inicial,
+            }
+
+        # === FINANCEIRO: GASTOS POR OBRA ===
+        if acao == "gastos_por_obra":
+            dados = gastos_por_obra()
+            if "erro" in dados:
+                return {"text": f"❌ {dados['erro']}", "buttons": menu_inicial}
+            linhas = [f"🏗️ {d['obra']} — {money(d['valor'])}" for d in dados]
+            return {"text": "📊 **Gastos por Obra:**\n\n" + "\n".join(linhas), "buttons": menu_inicial}
+
+        # === FINANCEIRO: GASTOS POR CENTRO DE CUSTO ===
+        if acao == "gastos_por_centro_custo":
+            dados = gastos_por_centro_custo()
+            if "erro" in dados:
+                return {"text": f"❌ {dados['erro']}", "buttons": menu_inicial}
+            linhas = [f"🏢 {d['centro_custo']} — {money(d['valor'])}" for d in dados]
+            return {"text": "📊 **Gastos por Centro de Custo:**\n\n" + "\n".join(linhas), "buttons": menu_inicial}
+
+        # === DEFAULT ===
         return {"text": "🤖 Não entendi o comando.", "buttons": menu_inicial}
 
     except Exception as e:
