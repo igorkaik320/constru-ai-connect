@@ -1,7 +1,9 @@
 import requests
 import logging
 from base64 import b64encode
-from functools import lru_cache
+
+# 🚀 Identificação da versão atual
+logging.warning("🚀 Rodando versão 1.4 do sienge_boletos.py (sem cache de boletos)")
 
 # ============================================================
 # 🔐 CONFIGURAÇÕES DE AUTENTICAÇÃO SIENGE
@@ -39,6 +41,7 @@ def buscar_cliente_por_cpf(cpf: str):
         return results[0]
     return None
 
+
 # ============================================================
 # 🧾 BOLETOS / TÍTULOS
 # ============================================================
@@ -51,6 +54,7 @@ def listar_boletos_por_cliente(cliente_id: int):
         return []
     return r.json().get("results") or []
 
+
 def listar_parcelas(titulo_id: int):
     """Lista parcelas de um título."""
     if not titulo_id:
@@ -62,12 +66,12 @@ def listar_parcelas(titulo_id: int):
         return []
     return r.json().get("results") or []
 
+
 # ============================================================
-# 🧠 VERIFICAÇÃO DE SEGUNDA VIA
+# 🧠 VERIFICAÇÃO DE SEGUNDA VIA (SEM CACHE)
 # ============================================================
-@lru_cache(maxsize=200)
 def boleto_existe(titulo_id: int, parcela_id: int) -> bool:
-    """Verifica se existe segunda via real para essa parcela."""
+    """Verifica se existe segunda via real para essa parcela (sem cache)."""
     url = f"{BASE_URL}/payment-slip-notification"
     params = {"billReceivableId": titulo_id, "installmentId": parcela_id}
 
@@ -79,10 +83,13 @@ def boleto_existe(titulo_id: int, parcela_id: int) -> bool:
             data = r.json()
             results = data.get("results") or []
             if results and results[0].get("urlReport"):
+                logging.info("🟢 Segunda via encontrada!")
                 return True
+        logging.info("🔴 Segunda via não encontrada.")
     except Exception as e:
         logging.error(f"Erro ao verificar boleto ({titulo_id}/{parcela_id}): {e}")
     return False
+
 
 # ============================================================
 # 🔍 BUSCAR BOLETOS POR CPF
@@ -124,10 +131,7 @@ def buscar_boletos_por_cpf(cpf: str):
             logging.info(f"🔎 Testando boleto título={titulo_id} parcela={parcela_id}")
 
             if not boleto_existe(titulo_id, parcela_id):
-                logging.info(f"🔴 Boleto NÃO disponível -> Título {titulo_id}, Parcela {parcela_id}")
                 continue
-
-            logging.info(f"🟢 Boleto DISPONÍVEL -> Título {titulo_id}, Parcela {parcela_id}")
 
             lista.append({
                 "titulo_id": titulo_id,
@@ -140,7 +144,11 @@ def buscar_boletos_por_cpf(cpf: str):
     if not lista:
         return {"erro": f"📭 Nenhum boleto disponível para segunda via de {nome}."}
 
-    return {"nome": nome, "boletos": lista}
+    return {
+        "nome": nome,
+        "boletos": lista
+    }
+
 
 # ============================================================
 # 🔗 GERAR LINK DO BOLETO (2ª VIA)
