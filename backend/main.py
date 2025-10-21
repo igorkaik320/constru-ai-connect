@@ -157,7 +157,8 @@ async def mensagem(msg: Message):
         # === FLUXO DE BOLETOS ===
         if acao == "iniciar_fluxo_boletos":
             return {
-                "text": "👋 Olá! Para localizar seus boletos, por favor digite o CPF do titular."
+                "text": "👋 Olá! Para localizar seus boletos, por favor digite o CPF do titular.\n"
+                        "(Pode digitar com ou sem formatação 😉)",
                 "buttons": [{"label": "Voltar ao Menu", "action": "menu"}],
             }
 
