@@ -2,6 +2,7 @@ import requests
 import logging
 import json
 from base64 import b64encode
+from functools import lru_cache
 
 # === CONFIGURAÇÕES ===
 subdominio = "cctcontrol"
@@ -12,13 +13,11 @@ BASE_URL = f"https://api.sienge.com.br/{subdominio}/public/api/v1"
 
 # Auth básico
 _token = b64encode(f"{usuario}:{senha}".encode()).decode()
-
 json_headers = {
     "Authorization": f"Basic {_token}",
     "accept": "application/json",
     "Content-Type": "application/json",
 }
-
 
 # ==============================================================
 # 🔍 CLIENTE
@@ -39,9 +38,7 @@ def buscar_cliente_por_cpf(cpf: str):
     results = data.get("results") or data
     if isinstance(results, list) and len(results) > 0:
         return results[0]
-
     return None
-
 
 # ==============================================================
 # 🧾 BOLETOS
@@ -68,6 +65,94 @@ def listar_parcelas(titulo_id: int):
         return []
     return r.json().get("results") or []
 
+
+# ==============================================================
+# 🧠 CACHE DE TESTES DE SEGUNDA VIA
+# ==============================================================
+
+@lru_cache(maxsize=100)
+def boleto_existe(titulo_id: int, parcela_id: int) -> bool:
+    """Verifica se existe segunda via real para essa parcela"""
+    url = f"{BASE_URL}/payment-slip-notification"
+    params = {"billReceivableId": titulo_id, "installmentId": parcela_id}
+    r = requests.get(url, headers=json_headers, params=params, timeout=20)
+    logging.info(f"🔎 Verificando boleto: {params} -> {r.status_code}")
+    if r.status_code == 200:
+        try:
+            data = r.json()
+            results = data.get("results") or []
+            if results and results[0].get("urlReport"):
+                return True
+        except Exception:
+            pass
+    return False
+
+
+# ==============================================================
+# 🔗 BUSCAR BOLETOS POR CPF
+# ==============================================================
+
+def buscar_boletos_por_cpf(cpf: str):
+    """Busca apenas boletos realmente disponíveis para 2ª via."""
+    cliente = buscar_cliente_por_cpf(cpf)
+    if not cliente:
+        return {"erro": "❌ Nenhum cliente encontrado com esse CPF."}
+
+    nome = cliente.get("name")
+    cid = cliente.get("id")
+    logging.info(f"✅ Cliente encontrado: {nome} (ID {cid})")
+
+    boletos = listar_boletos_por_cliente(cid)
+    if not boletos:
+        return {"erro": f"📭 Nenhum boleto encontrado para {nome}."}
+
+    lista = []
+    for b in boletos:
+        titulo_id = b.get("id") or b.get("receivableBillId")
+        valor = b.get("amount") or b.get("receivableBillValue") or 0.0
+        desc = b.get("description") or b.get("documentNumber") or b.get("note") or "-"
+        emissao = b.get("issueDate")
+        quitado = b.get("payOffDate")
+
+        if quitado:
+            continue
+
+        parcelas = listar_parcelas(titulo_id)
+        if not parcelas:
+            continue
+
+        for p in parcelas:
+            if p.get("settlementDate") or p.get("canceled"):
+                continue
+
+            parcela_id = p.get("id")
+            if not parcela_id:
+                continue
+
+            # ✅ Verifica se o boleto realmente existe
+            if not boleto_existe(titulo_id, parcela_id):
+                continue
+
+            lista.append({
+                "titulo_id": titulo_id,
+                "parcela_id": parcela_id,
+                "descricao": desc,
+                "valor": p.get("amount") or valor,
+                "vencimento": p.get("dueDate") or emissao,
+            })
+
+    if not lista:
+        return {"erro": f"📭 Nenhum boleto disponível para segunda via de {nome}."}
+
+    return {
+        "nome": nome,
+        "boletos": lista
+    }
+
+
+# ==============================================================
+# 🔗 GERAR LINK BOLETO
+# ==============================================================
 
 def gerar_link_boleto(titulo_id: int, parcela_id: int) -> str:
     """Gera link da segunda via do boleto"""
@@ -97,61 +182,3 @@ def gerar_link_boleto(titulo_id: int, parcela_id: int) -> str:
             return f"❌ Erro ao processar boleto: {e}"
 
     return f"❌ Erro ao gerar boleto ({r.status_code})."
-
-
-# ==============================================================
-# 🔗 BUSCAR BOLETOS POR CPF
-# ==============================================================
-
-def buscar_boletos_por_cpf(cpf: str):
-    """Busca apenas boletos em aberto com boleto gerado para um cliente"""
-    cliente = buscar_cliente_por_cpf(cpf)
-    if not cliente:
-        return {"erro": "❌ Nenhum cliente encontrado com esse CPF."}
-
-    nome = cliente.get("name")
-    cid = cliente.get("id")
-    logging.info(f"✅ Cliente encontrado: {nome} (ID {cid})")
-
-    boletos = listar_boletos_por_cliente(cid)
-    if not boletos:
-        return {"erro": f"📭 Nenhum boleto encontrado para {nome}."}
-
-    lista = []
-    for b in boletos:
-        titulo_id = b.get("id") or b.get("receivableBillId")
-        valor = b.get("amount") or b.get("receivableBillValue") or 0.0
-        desc = b.get("description") or b.get("documentNumber") or b.get("note") or "-"
-        emissao = b.get("issueDate")
-        quitado = b.get("payOffDate")
-
-        # 🚫 Ignora títulos quitados
-        if quitado:
-            continue
-
-        parcelas = listar_parcelas(titulo_id)
-        if not parcelas:
-            continue  # ignora títulos sem parcelas
-
-        # 🔍 Apenas parcelas em aberto com boleto
-        for p in parcelas:
-            if p.get("settlementDate") or p.get("canceled"):
-                continue
-            if not p.get("hasPaymentSlip") and not p.get("paymentSlipId"):
-                continue
-
-            lista.append({
-                "titulo_id": titulo_id,
-                "parcela_id": p.get("id"),
-                "descricao": desc,
-                "valor": p.get("amount") or valor,
-                "vencimento": p.get("dueDate") or p.get("expirationDate") or emissao,
-            })
-
-    if not lista:
-        return {"erro": f"📭 Nenhum boleto disponível para segunda via de {nome}."}
-
-    return {
-        "nome": nome,
-        "boletos": lista
-    }
