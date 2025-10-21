@@ -3,7 +3,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { motion } from "framer-motion";
 import { useEffect, useState } from "react";
-import { Bot, User, Check, X, Link as LinkIcon } from "lucide-react";
+import { Bot, User, Link as LinkIcon } from "lucide-react";
 
 interface ChatMessageProps {
   message: {
@@ -15,7 +15,7 @@ interface ChatMessageProps {
     buttons?: { label: string; action: string; pedido_id?: number }[];
   };
   isLoading?: boolean;
-  onAction?: (codigo: number, acao: "autorizar" | "reprovar") => void;
+  onAction?: (codigo: number, acao: string) => void;
 }
 
 export const ChatMessage = ({ message, isLoading, onAction }: ChatMessageProps) => {
@@ -50,10 +50,7 @@ export const ChatMessage = ({ message, isLoading, onAction }: ChatMessageProps) 
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.25 }}
-      className={cn(
-        "w-full py-4 px-4",
-        isUser ? "flex justify-end" : "flex justify-start"
-      )}
+      className={cn("w-full py-4 px-4", isUser ? "flex justify-end" : "flex justify-start")}
     >
       <div className="max-w-3xl flex gap-4">
         {/* Avatar IA */}
@@ -129,7 +126,14 @@ export const ChatMessage = ({ message, isLoading, onAction }: ChatMessageProps) 
               {message.buttons.map((btn, i) => (
                 <button
                   key={i}
-                  onClick={() => onAction?.(btn.pedido_id!, btn.action as any)}
+                  onClick={() => {
+                    // 🔧 Correção: evita undefined
+                    if (btn.pedido_id) {
+                      onAction?.(btn.pedido_id, btn.action);
+                    } else {
+                      onAction?.(0, btn.action);
+                    }
+                  }}
                   className="px-3 py-1.5 text-sm rounded-lg bg-gradient-to-r from-purple-500 to-blue-500 text-white hover:opacity-90 transition"
                 >
                   {btn.label}
