@@ -1,14 +1,15 @@
 import requests
 import logging
 from base64 import b64encode
+from datetime import datetime, timedelta
 
 # ============================================================
-# 🚀 IDENTIFICAÇÃO DA VERSÃO
+# 🚀 IDENTIFICAÇÃO
 # ============================================================
-logging.warning("🚀 Rodando versão 1.3 do sienge_financeiro.py (fallback automático para rotas financeiras)")
+logging.warning("🚀 Rodando versão 2.0 do sienge_financeiro.py (endpoint oficial /bills do Sienge)")
 
 # ============================================================
-# 🔐 AUTENTICAÇÃO SIENGE
+# 🔐 AUTENTICAÇÃO
 # ============================================================
 subdominio = "cctcontrol"
 usuario = "cctcontrol-api"
@@ -23,110 +24,104 @@ json_headers = {
     "Content-Type": "application/json",
 }
 
+# ============================================================
+# 🧠 FUNÇÃO AUXILIAR
+# ============================================================
+def money(v):
+    try:
+        return f"R$ {float(v):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+    except:
+        return "R$ 0,00"
+
+
+def periodo_padrao(dias=30):
+    """Retorna período padrão (últimos N dias) no formato yyyy-MM-dd"""
+    fim = datetime.now().date()
+    ini = fim - timedelta(days=dias)
+    return ini.strftime("%Y-%m-%d"), fim.strftime("%Y-%m-%d")
+
 
 # ============================================================
-# 💰 RESUMO FINANCEIRO GERAL (com fallback automático)
+# 💰 RESUMO FINANCEIRO GERAL
 # ============================================================
 def resumo_financeiro():
-    """Calcula total de contas a pagar e receber com fallback inteligente."""
+    """Busca títulos a pagar e a receber no período atual."""
     try:
-        logging.info("📊 Consultando resumo financeiro (contas a pagar e receber)...")
+        logging.info("📊 Consultando resumo financeiro...")
 
-        rotas_pagar = [
-            f"{BASE_URL}/accounts-payable/payable-bills",
-            f"{BASE_URL}/accounts-payable/payable-titles",
-            f"{BASE_URL}/accounts-payable/payables"
-        ]
-        rota_pagar_valida = None
-        contas_pagar = []
+        start, end = periodo_padrao(30)
+        logging.info(f"📅 Período: {start} até {end}")
 
-        # Tenta rotas até encontrar uma que funcione
-        for rota in rotas_pagar:
-            r = requests.get(rota, headers=json_headers, timeout=40)
-            logging.info(f"➡️ Testando rota a pagar: {rota} -> {r.status_code}")
-            if r.status_code == 200:
-                contas_pagar = r.json().get("results", [])
-                rota_pagar_valida = rota
-                logging.info(f"✅ Rota válida encontrada: {rota}")
-                break
+        # ===== CONTAS A PAGAR =====
+        url_pagar = f"{BASE_URL}/bills?startDate={start}&endDate={end}"
+        logging.info(f"➡️ GET {url_pagar}")
+        r_pagar = requests.get(url_pagar, headers=json_headers, timeout=40)
 
-        if not rota_pagar_valida:
-            logging.error("❌ Nenhuma rota válida para contas a pagar encontrada.")
-            return {"erro": "Não foi possível acessar contas a pagar."}
+        if r_pagar.status_code != 200:
+            logging.error(f"❌ Erro contas a pagar -> {r_pagar.status_code}")
+            contas_pagar = []
+        else:
+            contas_pagar = r_pagar.json().get("results", [])
+            logging.info(f"📦 {len(contas_pagar)} títulos a pagar retornados")
 
-        # Contas a receber
-        rota_receber = f"{BASE_URL}/accounts-receivable/receivable-bills"
-        r_receber = requests.get(rota_receber, headers=json_headers, timeout=40)
-        logging.info(f"➡️ GET {rota_receber} -> {r_receber.status_code}")
+        # ===== CONTAS A RECEBER =====
+        url_receber = f"{BASE_URL}/accounts-receivable/receivable-bills"
+        logging.info(f"➡️ GET {url_receber}")
+        r_receber = requests.get(url_receber, headers=json_headers, timeout=40)
 
         if r_receber.status_code != 200:
-            logging.error("❌ Erro ao acessar contas a receber.")
-            return {"erro": "Erro ao buscar contas a receber."}
+            logging.error(f"❌ Erro contas a receber -> {r_receber.status_code}")
+            contas_receber = []
+        else:
+            contas_receber = r_receber.json().get("results", [])
+            logging.info(f"📦 {len(contas_receber)} títulos a receber retornados")
 
-        contas_receber = r_receber.json().get("results", [])
-
-        logging.info(f"📦 {len(contas_pagar)} títulos a pagar | {len(contas_receber)} a receber")
-
-        # Função auxiliar
-        def extrair_valor(item):
-            for campo in ["amount", "value", "billValue", "totalValue"]:
-                if campo in item:
-                    return float(item[campo] or 0)
-            return 0.0
-
-        total_pagar = sum(extrair_valor(i) for i in contas_pagar)
-        total_receber = sum(extrair_valor(i) for i in contas_receber)
+        # ===== SOMATÓRIOS =====
+        total_pagar = sum(float(i.get("totalInvoiceAmount") or 0) for i in contas_pagar)
+        total_receber = sum(float(i.get("amount") or i.get("value") or 0) for i in contas_receber)
         lucro = total_receber - total_pagar
 
-        logging.info(f"💸 Total a pagar: {total_pagar}")
-        logging.info(f"💰 Total a receber: {total_receber}")
+        logging.info(f"💸 A pagar: {total_pagar}")
+        logging.info(f"💰 A receber: {total_receber}")
         logging.info(f"📈 Lucro: {lucro}")
 
         return {
-            "periodo": "Geral",
+            "periodo": f"{start} até {end}",
             "a_pagar": total_pagar,
             "a_receber": total_receber,
             "lucro": lucro,
         }
 
     except Exception as e:
-        logging.exception("Erro ao calcular resumo financeiro:")
+        logging.exception("Erro no resumo financeiro:")
         return {"erro": str(e)}
 
 
 # ============================================================
-# 🏗️ GASTOS POR OBRA (usando rota válida detectada)
+# 🏗️ GASTOS POR OBRA
 # ============================================================
 def gastos_por_obra():
+    """Agrupa títulos por obra (building)."""
     try:
-        rotas = [
-            f"{BASE_URL}/accounts-payable/payable-bills",
-            f"{BASE_URL}/accounts-payable/payable-titles",
-            f"{BASE_URL}/accounts-payable/payables"
-        ]
-        dados = []
-        rota_valida = None
+        start, end = periodo_padrao(30)
+        url = f"{BASE_URL}/bills?startDate={start}&endDate={end}"
+        logging.info(f"🏗️ Consultando gastos por obra: {url}")
 
-        for rota in rotas:
-            r = requests.get(rota, headers=json_headers, timeout=40)
-            logging.info(f"➡️ Testando rota: {rota} -> {r.status_code}")
-            if r.status_code == 200:
-                dados = r.json().get("results", [])
-                rota_valida = rota
-                logging.info(f"✅ Usando rota {rota}")
-                break
+        r = requests.get(url, headers=json_headers, timeout=40)
+        if r.status_code != 200:
+            return {"erro": f"Erro ({r.status_code}) ao buscar obras"}
 
-        if not rota_valida:
-            return {"erro": "Nenhuma rota válida encontrada para contas a pagar."}
+        dados = r.json().get("results", [])
+        logging.info(f"📦 {len(dados)} títulos retornados.")
 
         obras = {}
         for item in dados:
-            obra = item.get("unitName") or item.get("unitId") or "Sem obra"
-            valor = float(item.get("amount") or item.get("value") or 0)
+            obra = item.get("originId") or "Sem origem"
+            valor = float(item.get("totalInvoiceAmount") or 0)
             obras[obra] = obras.get(obra, 0) + valor
 
         for nome, val in obras.items():
-            logging.info(f"🏗️ {nome}: {val}")
+            logging.info(f"🏗️ {nome}: {money(val)}")
 
         return [{"obra": k, "valor": v} for k, v in obras.items()]
 
@@ -136,38 +131,44 @@ def gastos_por_obra():
 
 
 # ============================================================
-# 🧩 GASTOS POR CENTRO DE CUSTO (usando rota válida detectada)
+# 🧩 GASTOS POR CENTRO DE CUSTO
 # ============================================================
 def gastos_por_centro_custo():
+    """Agrupa títulos por centro de custo, via apropriação financeira."""
     try:
-        rotas = [
-            f"{BASE_URL}/accounts-payable/payable-bills",
-            f"{BASE_URL}/accounts-payable/payable-titles",
-            f"{BASE_URL}/accounts-payable/payables"
-        ]
-        dados = []
-        rota_valida = None
+        start, end = periodo_padrao(30)
+        url = f"{BASE_URL}/bills?startDate={start}&endDate={end}"
+        logging.info(f"🏢 Consultando gastos por centro de custo: {url}")
 
-        for rota in rotas:
-            r = requests.get(rota, headers=json_headers, timeout=40)
-            logging.info(f"➡️ Testando rota: {rota} -> {r.status_code}")
-            if r.status_code == 200:
-                dados = r.json().get("results", [])
-                rota_valida = rota
-                logging.info(f"✅ Usando rota {rota}")
-                break
+        r = requests.get(url, headers=json_headers, timeout=40)
+        if r.status_code != 200:
+            return {"erro": f"Erro ({r.status_code}) ao buscar títulos"}
 
-        if not rota_valida:
-            return {"erro": "Nenhuma rota válida encontrada para contas a pagar."}
-
+        dados = r.json().get("results", [])
         centros = {}
+
         for item in dados:
-            centro = item.get("costCenterName") or item.get("costCenterId") or "Sem centro de custo"
-            valor = float(item.get("amount") or item.get("value") or 0)
-            centros[centro] = centros.get(centro, 0) + valor
+            bill_id = item.get("id")
+            if not bill_id:
+                continue
+
+            # Busca apropriações financeiras do título
+            url_cc = f"{BASE_URL}/bills/{bill_id}/budget-categories"
+            r_cc = requests.get(url_cc, headers=json_headers, timeout=20)
+
+            if r_cc.status_code != 200:
+                continue
+
+            categorias = r_cc.json().get("results", [])
+            for cat in categorias:
+                cc = str(cat.get("costCenterId") or "Sem CC")
+                perc = float(cat.get("percentage") or 0)
+                valor_total = float(item.get("totalInvoiceAmount") or 0)
+                valor_parcial = valor_total * (perc / 100)
+                centros[cc] = centros.get(cc, 0) + valor_parcial
 
         for nome, val in centros.items():
-            logging.info(f"🏢 {nome}: {val}")
+            logging.info(f"🏢 {nome}: {money(val)}")
 
         return [{"centro_custo": k, "valor": v} for k, v in centros.items()]
 
