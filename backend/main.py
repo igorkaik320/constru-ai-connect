@@ -23,12 +23,12 @@ from sienge.sienge_boletos import (
 )
 
 # ============================================================
-# 🔧 CONFIGURAÇÃO DE LOG
+# 🔧 LOG
 # ============================================================
 logging.basicConfig(level=logging.INFO)
 
 # ============================================================
-# 🚀 INICIALIZAÇÃO DO FASTAPI
+# 🚀 FASTAPI APP
 # ============================================================
 app = FastAPI()
 
@@ -41,14 +41,14 @@ app.add_middleware(
 )
 
 # ============================================================
-# 📬 MODELO DE MENSAGEM
+# 📬 MODELO
 # ============================================================
 class Message(BaseModel):
     user: str
     text: str
 
 # ============================================================
-# 💰 FORMATADOR DE VALORES
+# 💰 FORMATAÇÃO DE VALORES
 # ============================================================
 def money(v):
     try:
@@ -57,14 +57,14 @@ def money(v):
         return "R$ 0,00"
 
 # ============================================================
-# 🧠 INTERPRETAÇÃO DE INTENÇÕES (rápida e robusta)
+# 🧠 INTERPRETAÇÃO DE COMANDOS
 # ============================================================
 def entender_intencao(texto: str):
     t = (texto or "").strip().lower()
 
-    # === MENU ===
-    if t in ["menu", "início", "inicio"]:
-        return {"acao": "menu_inicial"}
+    # === CASO VAZIO OU SAUDAÇÃO ===
+    if t in ["", "oi", "ola", "olá", "bom dia", "boa tarde", "boa noite"]:
+        return {"acao": "saudacao"}
 
     # === PEDIDOS ===
     if "pedidos pendentes" in t:
@@ -86,17 +86,15 @@ def entender_intencao(texto: str):
         pid = next((p for p in t.split() if p.isdigit()), None)
         return {"acao": "relatorio_pdf", "parametros": {"pedido_id": int(pid)}} if pid else {}
 
-    # === SEGUNDA VIA ===
+    # === SEGUNDA VIA DE BOLETOS ===
     if any(k in t for k in ["segunda via", "2ª via", "2a via", "boletos", "boleto cpf"]):
-        # Caso o texto contenha o formato “420/5” ou “420 5”
         match = re.search(r"(\d{2,})[^\d]+(\d{1,})", t)
         if match:
             titulo_id, parcela_id = match.groups()
             return {"acao": "link_boleto", "parametros": {"titulo_id": int(titulo_id), "parcela_id": int(parcela_id)}}
-        # Caso seja apenas o início do fluxo (“segunda via” sem números)
         return {"acao": "iniciar_fluxo_boletos"}
 
-    # === CPF DETECTADO ===
+    # === CPF ===
     cpf_match = re.search(r"(\d{3}\.\d{3}\.\d{3}-\d{2}|\d{11})", t)
     if cpf_match:
         cpf = re.sub(r"\D", "", cpf_match.group(1))
@@ -117,6 +115,7 @@ async def mensagem(msg: Message):
     acao = intencao.get("acao")
     parametros = intencao.get("parametros", {}) or {}
 
+    # MENU PADRÃO
     menu_inicial = [
         {"label": "🧾 Pedidos Pendentes", "action": "pedidos pendentes"},
         {"label": "📄 Gerar PDF", "action": "gerar pdf"},
@@ -124,15 +123,18 @@ async def mensagem(msg: Message):
     ]
 
     try:
-        # === MENU ===
-        if acao in ["menu_inicial", None] and msg.text.strip() == "":
-            return {"text": "👋 Olá! Como posso te ajudar hoje?", "buttons": menu_inicial}
+        # === SAUDAÇÃO INICIAL ===
+        if acao == "saudacao":
+            return {
+                "text": "👋 Olá! Como posso te ajudar hoje?\nEscolha uma das opções abaixo 👇",
+                "buttons": menu_inicial,
+            }
 
         # === PEDIDOS ===
         if acao == "listar_pedidos_pendentes":
             pedidos = listar_pedidos_pendentes()
             if not pedidos:
-                return {"text": "📭 Nenhum pedido pendente de autorização encontrado.", "buttons": menu_inicial}
+                return {"text": "📭 Nenhum pedido pendente encontrado.", "buttons": menu_inicial}
             linhas = [f"• Pedido {p['id']} — {money(p.get('totalAmount'))}" for p in pedidos]
             return {"text": "📋 Pedidos pendentes:\n\n" + "\n".join(linhas), "buttons": menu_inicial}
 
@@ -157,9 +159,8 @@ async def mensagem(msg: Message):
         # === FLUXO DE BOLETOS ===
         if acao == "iniciar_fluxo_boletos":
             return {
-                "text": "👋 Olá! Para localizar seus boletos, por favor digite o CPF do titular.\n"
-                        "(Pode digitar com ou sem formatação 😉)",
-                "buttons": [{"label": "Voltar ao Menu", "action": "menu"}],
+                "text": "💳 Para localizar seus boletos, digite o CPF do titular (com ou sem formatação).",
+                "buttons": [{"label": "⬅️ Voltar", "action": "ola"}],
             }
 
         if acao == "buscar_boletos_cpf":
@@ -189,7 +190,6 @@ async def mensagem(msg: Message):
             parcela = parametros.get("parcela_id")
             if not titulo or not parcela:
                 return {"text": "⚠️ Informe o título e parcela (ex: 2ª via 267/1)", "buttons": menu_inicial}
-
             msg_link = gerar_link_boleto(titulo, parcela)
             return {"text": msg_link, "buttons": menu_inicial}
 
