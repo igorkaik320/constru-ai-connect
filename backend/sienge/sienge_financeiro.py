@@ -1,31 +1,23 @@
 import requests
 import logging
-from base64 import b64encode
-from datetime import datetime, timedelta
+import datetime
+import pandas as pd
 
 # ============================================================
-# 🚀 IDENTIFICAÇÃO
+# ⚙️ CONFIGURAÇÕES GERAIS
 # ============================================================
-logging.warning("🚀 Rodando versão 2.0 do sienge_financeiro.py (endpoint oficial /bills do Sienge)")
+logging.warning("🚀 Rodando versão 3.0 do sienge_financeiro.py (DRE + Fluxo + Relatórios Gráficos)")
+
+# Suas credenciais Sienge (ajuste conforme o padrão dos outros módulos)
+SIENGE_BASE_URL = "https://api.sienge.com.br/cctcontrol/public/api/v1"
+SIENGE_USER = "api_user_aqui"
+SIENGE_PASS = "api_senha_aqui"
+
+def sienge_auth():
+    return (SIENGE_USER, SIENGE_PASS)
 
 # ============================================================
-# 🔐 AUTENTICAÇÃO
-# ============================================================
-subdominio = "cctcontrol"
-usuario = "cctcontrol-api"
-senha = "9SQ2MaNrFOeZOOuOAqeSRy7bYWYDDf85"
-
-BASE_URL = f"https://api.sienge.com.br/{subdominio}/public/api/v1"
-_token = b64encode(f"{usuario}:{senha}".encode()).decode()
-
-json_headers = {
-    "Authorization": f"Basic {_token}",
-    "accept": "application/json",
-    "Content-Type": "application/json",
-}
-
-# ============================================================
-# 🧠 FUNÇÃO AUXILIAR
+# 🧮 FUNÇÕES AUXILIARES
 # ============================================================
 def money(v):
     try:
@@ -33,145 +25,165 @@ def money(v):
     except:
         return "R$ 0,00"
 
+def get_date(days_ago=30):
+    hoje = datetime.date.today()
+    return (hoje - datetime.timedelta(days=days_ago)).isoformat(), hoje.isoformat()
 
-def periodo_padrao(dias=30):
-    """Retorna período padrão (últimos N dias) no formato yyyy-MM-dd"""
-    fim = datetime.now().date()
-    ini = fim - timedelta(days=dias)
-    return ini.strftime("%Y-%m-%d"), fim.strftime("%Y-%m-%d")
-
+def get(endpoint, params=None):
+    url = f"{SIENGE_BASE_URL}/{endpoint}"
+    logging.info(f"➡️ GET {url}")
+    r = requests.get(url, params=params, auth=sienge_auth())
+    logging.info(f"📦 Status: {r.status_code}")
+    if r.status_code == 200:
+        return r.json()
+    logging.error(f"❌ Erro na requisição: {r.status_code}")
+    return {}
 
 # ============================================================
-# 💰 RESUMO FINANCEIRO GERAL
+# 💰 1️⃣ RESUMO FINANCEIRO / DRE
 # ============================================================
-def resumo_financeiro():
-    """Busca títulos a pagar e a receber no período atual."""
-    try:
-        logging.info("📊 Consultando resumo financeiro...")
+def resumo_financeiro_dre():
+    logging.info("📊 Consultando DRE resumido...")
 
-        start, end = periodo_padrao(30)
-        logging.info(f"📅 Período: {start} até {end}")
+    inicio, fim = get_date(30)
+    logging.info(f"📅 Período: {inicio} até {fim}")
 
-        # ===== CONTAS A PAGAR =====
-        url_pagar = f"{BASE_URL}/bills?startDate={start}&endDate={end}"
-        logging.info(f"➡️ GET {url_pagar}")
-        r_pagar = requests.get(url_pagar, headers=json_headers, timeout=40)
+    # --- Contas a pagar ---
+    pagar = get("bills", {"startDate": inicio, "endDate": fim})
+    total_pagar = sum(i.get("totalInvoiceAmount", 0) for i in pagar.get("results", []))
 
-        if r_pagar.status_code != 200:
-            logging.error(f"❌ Erro contas a pagar -> {r_pagar.status_code}")
-            contas_pagar = []
-        else:
-            contas_pagar = r_pagar.json().get("results", [])
-            logging.info(f"📦 {len(contas_pagar)} títulos a pagar retornados")
+    # --- Contas a receber ---
+    receber = get("accounts-receivable/receivable-bills")
+    total_receber = sum(i.get("amount", 0) for i in receber.get("results", []))
 
-        # ===== CONTAS A RECEBER =====
-        url_receber = f"{BASE_URL}/accounts-receivable/receivable-bills"
-        logging.info(f"➡️ GET {url_receber}")
-        r_receber = requests.get(url_receber, headers=json_headers, timeout=40)
+    lucro = total_receber - total_pagar
 
-        if r_receber.status_code != 200:
-            logging.error(f"❌ Erro contas a receber -> {r_receber.status_code}")
-            contas_receber = []
-        else:
-            contas_receber = r_receber.json().get("results", [])
-            logging.info(f"📦 {len(contas_receber)} títulos a receber retornados")
-
-        # ===== SOMATÓRIOS =====
-        total_pagar = sum(float(i.get("totalInvoiceAmount") or 0) for i in contas_pagar)
-        total_receber = sum(float(i.get("amount") or i.get("value") or 0) for i in contas_receber)
-        lucro = total_receber - total_pagar
-
-        logging.info(f"💸 A pagar: {total_pagar}")
-        logging.info(f"💰 A receber: {total_receber}")
-        logging.info(f"📈 Lucro: {lucro}")
-
-        return {
-            "periodo": f"{start} até {end}",
-            "a_pagar": total_pagar,
-            "a_receber": total_receber,
-            "lucro": lucro,
+    dre = {
+        "periodo": {"inicio": inicio, "fim": fim},
+        "receitas": total_receber,
+        "despesas": total_pagar,
+        "lucro": lucro,
+        "formatado": {
+            "receitas": money(total_receber),
+            "despesas": money(total_pagar),
+            "lucro": money(lucro),
         }
+    }
 
-    except Exception as e:
-        logging.exception("Erro no resumo financeiro:")
-        return {"erro": str(e)}
-
+    logging.info(f"💰 Receita: {money(total_receber)} | Despesa: {money(total_pagar)} | Lucro: {money(lucro)}")
+    return dre
 
 # ============================================================
-# 🏗️ GASTOS POR OBRA
+# 📈 2️⃣ FLUXO DE CAIXA (Entradas e Saídas por dia)
+# ============================================================
+def fluxo_caixa(dias=30):
+    logging.info("📊 Gerando fluxo de caixa diário...")
+
+    inicio, fim = get_date(dias)
+    bills = get("bills", {"startDate": inicio, "endDate": fim}).get("results", [])
+    df = pd.DataFrame(bills)
+
+    if df.empty:
+        logging.warning("⚠️ Nenhum dado financeiro encontrado.")
+        return []
+
+    df["issueDate"] = pd.to_datetime(df["issueDate"], errors="coerce")
+    df["totalInvoiceAmount"] = pd.to_numeric(df["totalInvoiceAmount"], errors="coerce").fillna(0)
+
+    fluxo = (
+        df.groupby(df["issueDate"].dt.date)["totalInvoiceAmount"]
+        .sum()
+        .reset_index()
+        .rename(columns={"issueDate": "data", "totalInvoiceAmount": "valor"})
+    )
+
+    fluxo["tipo"] = "Saída"
+    fluxo = fluxo.to_dict(orient="records")
+    logging.info(f"📅 {len(fluxo)} dias processados no fluxo de caixa")
+    return fluxo
+
+# ============================================================
+# 🏗️ 3️⃣ GASTOS POR OBRA
 # ============================================================
 def gastos_por_obra():
-    """Agrupa títulos por obra (building)."""
-    try:
-        start, end = periodo_padrao(30)
-        url = f"{BASE_URL}/bills?startDate={start}&endDate={end}"
-        logging.info(f"🏗️ Consultando gastos por obra: {url}")
+    logging.info("🏗️ Consultando gastos por obra...")
+    inicio, fim = get_date(60)
+    bills = get("bills", {"startDate": inicio, "endDate": fim}).get("results", [])
+    dados = []
 
-        r = requests.get(url, headers=json_headers, timeout=40)
-        if r.status_code != 200:
-            return {"erro": f"Erro ({r.status_code}) ao buscar obras"}
+    for b in bills:
+        bill_id = b.get("id")
+        total = b.get("totalInvoiceAmount", 0)
+        obras = get(f"bills/{bill_id}/buildings-cost").get("results", [])
+        for o in obras:
+            dados.append({
+                "obra": o.get("buildingName", "Sem nome"),
+                "empresa": o.get("costEstimationSheetName", "Não informado"),
+                "valor": total * (o.get("percentage", 0) / 100),
+            })
 
-        dados = r.json().get("results", [])
-        logging.info(f"📦 {len(dados)} títulos retornados.")
+    df = pd.DataFrame(dados)
+    if df.empty:
+        return []
 
-        obras = {}
-        for item in dados:
-            obra = item.get("originId") or "Sem origem"
-            valor = float(item.get("totalInvoiceAmount") or 0)
-            obras[obra] = obras.get(obra, 0) + valor
-
-        for nome, val in obras.items():
-            logging.info(f"🏗️ {nome}: {money(val)}")
-
-        return [{"obra": k, "valor": v} for k, v in obras.items()]
-
-    except Exception as e:
-        logging.exception("Erro em gastos_por_obra:")
-        return {"erro": str(e)}
-
+    df = df.groupby(["empresa", "obra"])["valor"].sum().reset_index()
+    logging.info(f"🏗️ {len(df)} obras encontradas.")
+    return df.to_dict(orient="records")
 
 # ============================================================
-# 🧩 GASTOS POR CENTRO DE CUSTO
+# 🧾 4️⃣ GASTOS POR CENTRO DE CUSTO
 # ============================================================
 def gastos_por_centro_custo():
-    """Agrupa títulos por centro de custo, via apropriação financeira."""
-    try:
-        start, end = periodo_padrao(30)
-        url = f"{BASE_URL}/bills?startDate={start}&endDate={end}"
-        logging.info(f"🏢 Consultando gastos por centro de custo: {url}")
+    logging.info("🏢 Consultando gastos por centro de custo...")
+    inicio, fim = get_date(60)
+    bills = get("bills", {"startDate": inicio, "endDate": fim}).get("results", [])
+    dados = []
 
-        r = requests.get(url, headers=json_headers, timeout=40)
-        if r.status_code != 200:
-            return {"erro": f"Erro ({r.status_code}) ao buscar títulos"}
+    for b in bills:
+        bill_id = b.get("id")
+        total = b.get("totalInvoiceAmount", 0)
+        centros = get(f"bills/{bill_id}/budget-categories").get("results", [])
+        for c in centros:
+            dados.append({
+                "centro_custo": c.get("paymentCategoriesId", "Não informado"),
+                "valor": total * (c.get("percentage", 0) / 100),
+            })
 
-        dados = r.json().get("results", [])
-        centros = {}
+    df = pd.DataFrame(dados)
+    if df.empty:
+        return []
 
-        for item in dados:
-            bill_id = item.get("id")
-            if not bill_id:
-                continue
+    df = df.groupby("centro_custo")["valor"].sum().reset_index()
+    logging.info(f"🏢 {len(df)} centros de custo processados.")
+    return df.to_dict(orient="records")
 
-            # Busca apropriações financeiras do título
-            url_cc = f"{BASE_URL}/bills/{bill_id}/budget-categories"
-            r_cc = requests.get(url_cc, headers=json_headers, timeout=20)
+# ============================================================
+# 👥 5️⃣ GASTOS POR FORNECEDOR
+# ============================================================
+def gastos_por_fornecedor():
+    logging.info("👥 Consultando gastos por fornecedor...")
+    inicio, fim = get_date(60)
+    bills = get("bills", {"startDate": inicio, "endDate": fim}).get("results", [])
 
-            if r_cc.status_code != 200:
-                continue
+    df = pd.DataFrame(bills)
+    if df.empty:
+        return []
 
-            categorias = r_cc.json().get("results", [])
-            for cat in categorias:
-                cc = str(cat.get("costCenterId") or "Sem CC")
-                perc = float(cat.get("percentage") or 0)
-                valor_total = float(item.get("totalInvoiceAmount") or 0)
-                valor_parcial = valor_total * (perc / 100)
-                centros[cc] = centros.get(cc, 0) + valor_parcial
+    df = df.groupby("creditorId")["totalInvoiceAmount"].sum().reset_index()
+    df = df.sort_values(by="totalInvoiceAmount", ascending=False)
+    df.rename(columns={"creditorId": "fornecedor", "totalInvoiceAmount": "valor"}, inplace=True)
 
-        for nome, val in centros.items():
-            logging.info(f"🏢 {nome}: {money(val)}")
+    logging.info(f"👥 {len(df)} fornecedores processados.")
+    return df.to_dict(orient="records")
 
-        return [{"centro_custo": k, "valor": v} for k, v in centros.items()]
-
-    except Exception as e:
-        logging.exception("Erro em gastos_por_centro_custo:")
-        return {"erro": str(e)}
+# ============================================================
+# 📊 6️⃣ RELATÓRIO UNIFICADO
+# ============================================================
+def gerar_relatorio_json():
+    return {
+        "dre": resumo_financeiro_dre(),
+        "fluxo_caixa": fluxo_caixa(),
+        "gastos_por_obra": gastos_por_obra(),
+        "gastos_por_centro_custo": gastos_por_centro_custo(),
+        "gastos_por_fornecedor": gastos_por_fornecedor(),
+    }
