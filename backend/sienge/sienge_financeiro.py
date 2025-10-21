@@ -2,19 +2,28 @@ import requests
 import logging
 import datetime
 import pandas as pd
+from base64 import b64encode
 
 # ============================================================
-# ⚙️ CONFIGURAÇÕES GERAIS
+# 🚀 IDENTIFICAÇÃO DA VERSÃO
 # ============================================================
-logging.warning("🚀 Rodando versão 3.0 do sienge_financeiro.py (DRE + Fluxo + Relatórios Gráficos)")
+logging.warning("🚀 Rodando versão 3.1 do sienge_financeiro.py (DRE + Fluxo + Obras + Fornecedores)")
 
-# Suas credenciais Sienge (ajuste conforme o padrão dos outros módulos)
-SIENGE_BASE_URL = "https://api.sienge.com.br/cctcontrol/public/api/v1"
-SIENGE_USER = "api_user_aqui"
-SIENGE_PASS = "api_senha_aqui"
+# ============================================================
+# 🔐 CONFIGURAÇÕES DE AUTENTICAÇÃO SIENGE
+# ============================================================
+subdominio = "cctcontrol"
+usuario = "cctcontrol-api"
+senha = "9SQ2MaNrFOeZOOuOAqeSRy7bYWYDDf85"
 
-def sienge_auth():
-    return (SIENGE_USER, SIENGE_PASS)
+BASE_URL = f"https://api.sienge.com.br/{subdominio}/public/api/v1"
+_token = b64encode(f"{usuario}:{senha}".encode()).decode()
+
+json_headers = {
+    "Authorization": f"Basic {_token}",
+    "accept": "application/json",
+    "Content-Type": "application/json",
+}
 
 # ============================================================
 # 🧮 FUNÇÕES AUXILIARES
@@ -25,18 +34,20 @@ def money(v):
     except:
         return "R$ 0,00"
 
+
 def get_date(days_ago=30):
     hoje = datetime.date.today()
     return (hoje - datetime.timedelta(days=days_ago)).isoformat(), hoje.isoformat()
 
+
 def get(endpoint, params=None):
-    url = f"{SIENGE_BASE_URL}/{endpoint}"
+    url = f"{BASE_URL}/{endpoint}"
     logging.info(f"➡️ GET {url}")
-    r = requests.get(url, params=params, auth=sienge_auth())
+    r = requests.get(url, headers=json_headers, params=params, timeout=30)
     logging.info(f"📦 Status: {r.status_code}")
     if r.status_code == 200:
         return r.json()
-    logging.error(f"❌ Erro na requisição: {r.status_code}")
+    logging.error(f"❌ Erro na requisição: {r.status_code} -> {r.text[:200]}")
     return {}
 
 # ============================================================
@@ -53,7 +64,7 @@ def resumo_financeiro_dre():
     total_pagar = sum(i.get("totalInvoiceAmount", 0) for i in pagar.get("results", []))
 
     # --- Contas a receber ---
-    receber = get("accounts-receivable/receivable-bills")
+    receber = get("accounts-receivable/receivable-bills", {"startDate": inicio, "endDate": fim})
     total_receber = sum(i.get("amount", 0) for i in receber.get("results", []))
 
     lucro = total_receber - total_pagar
@@ -67,7 +78,7 @@ def resumo_financeiro_dre():
             "receitas": money(total_receber),
             "despesas": money(total_pagar),
             "lucro": money(lucro),
-        }
+        },
     }
 
     logging.info(f"💰 Receita: {money(total_receber)} | Despesa: {money(total_pagar)} | Lucro: {money(lucro)}")
