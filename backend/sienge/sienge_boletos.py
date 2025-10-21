@@ -127,9 +127,10 @@ def buscar_boletos_por_cpf(cpf: str):
             if not parcela_id:
                 continue
 
+            # 🔍 Log detalhado da verificação
             logging.info(f"🔎 Testando boleto título={titulo_id} parcela={parcela_id}")
 
-            # ✅ Verifica se existe a segunda via de fato
+            # ✅ Verifica se o boleto realmente existe (API de segunda via)
             if not boleto_existe(titulo_id, parcela_id):
                 logging.info(f"🔴 Boleto NÃO disponível -> Título {titulo_id}, Parcela {parcela_id}")
                 continue
