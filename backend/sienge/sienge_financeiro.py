@@ -2,15 +2,14 @@ import requests
 import logging
 from base64 import b64encode
 from datetime import datetime, timedelta
-from typing import Dict, Any, List, Tuple
 
 # ============================================================
 # 🚀 IDENTIFICAÇÃO DA VERSÃO
 # ============================================================
-logging.warning("🚀 Rodando versão 4.2 do sienge_financeiro.py (datas/empresa, relatorio_json e IA)")
+logging.warning("🚀 Rodando versão 4.3 do sienge_financeiro.py (valores corrigidos + modo debug)")
 
 # ============================================================
-# 🔐 AUTENTICAÇÃO (igual aos boletos)
+# 🔐 CONFIGURAÇÕES DE AUTENTICAÇÃO SIENGE
 # ============================================================
 subdominio = "cctcontrol"
 usuario = "cctcontrol-api"
@@ -26,24 +25,27 @@ json_headers = {
 }
 
 # ============================================================
-# 📅 Período padrão (últimos 12 meses)
+# 📅 FUNÇÃO PADRÃO DE DATAS (últimos 12 meses)
 # ============================================================
-def periodo_padrao() -> Tuple[str, str]:
+def periodo_padrao():
     fim = datetime.now().date()
     inicio = fim - timedelta(days=365)
     return inicio.isoformat(), fim.isoformat()
 
 # ============================================================
-# ⚙️ GET helper
+# ⚙️ FUNÇÃO BASE DE REQUISIÇÃO
 # ============================================================
-def sienge_get(endpoint: str, params: Dict[str, Any] | None = None) -> List[Dict[str, Any]]:
+def sienge_get(endpoint, params=None):
+    """Faz requisições GET autenticadas na API Sienge."""
     url = f"{BASE_URL}/{endpoint}"
-    params = dict(params or {})
 
-    if "startDate" not in params or "endDate" not in params:
-        i, f = periodo_padrao()
-        params.setdefault("startDate", i)
-        params.setdefault("endDate", f)
+    if params is None:
+        params = {}
+
+    if "startDate" not in params:
+        inicio, fim = periodo_padrao()
+        params["startDate"] = inicio
+        params["endDate"] = fim
 
     try:
         logging.info(f"➡️ GET {url} -> params={params}")
@@ -51,138 +53,84 @@ def sienge_get(endpoint: str, params: Dict[str, Any] | None = None) -> List[Dict
         logging.info(f"📦 Status: {r.status_code}")
 
         if r.status_code != 200:
-            logging.warning(f"⚠️ Erro {r.status_code}: {r.text[:400]}")
+            logging.warning(f"⚠️ Erro {r.status_code}: {r.text[:300]}")
             return []
 
         data = r.json()
-        return data.get("results") or (data if isinstance(data, list) else [])
+        resultados = data.get("results") or data
+
+        # 🧩 Log de amostra
+        if isinstance(resultados, list) and resultados:
+            logging.info(f"📄 Exemplo de retorno: {resultados[0]}")
+        else:
+            logging.warning("⚠️ Nenhum dado encontrado neste endpoint.")
+
+        return resultados
+
     except Exception as e:
-        logging.exception(f"❌ Erro em {endpoint}:")
+        logging.exception(f"❌ Erro de requisição no endpoint {endpoint}: {e}")
         return []
 
 # ============================================================
-# 🔢 Dinheiro bonitinho
+# 💰 RESUMO FINANCEIRO (DRE SIMPLIFICADO)
 # ============================================================
-def money(v: float) -> str:
-    try:
-        return f"R$ {float(v):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-    except Exception:
-        return "R$ 0,00"
-
-# ============================================================
-# 💰 Resumo Financeiro
-# params opcionais: startDate, endDate, enterpriseId
-# ============================================================
-def resumo_financeiro(**params) -> str:
+def resumo_financeiro(params=None):
+    """Resumo geral de receitas, despesas e lucro."""
     logging.info("📊 DRE Resumido (com período/empresa opcionais)")
-    pagar = sienge_get("bills", params)
-    receber = sienge_get("accounts-receivable/receivable-bills", params)
 
-    total_receitas = sum(float(x.get("amountValue") or x.get("amount") or 0) for x in receber)
-    total_despesas = sum(float(x.get("amountValue") or x.get("amount") or 0) for x in pagar)
+    contas_pagar = sienge_get("bills", params)
+    contas_receber = sienge_get("accounts-receivable/receivable-bills", params)
+
+    total_receitas = sum(float(c.get("receivableBillValue", 0) or 0) for c in contas_receber)
+    total_despesas = sum(float(c.get("totalValueAmount", 0) or 0) for c in contas_pagar)
     lucro = total_receitas - total_despesas
 
-    i = params.get("startDate") or periodo_padrao()[0]
-    f = params.get("endDate") or periodo_padrao()[1]
-    emp = params.get("enterpriseId")
-
-    subtitulo = f"Período {i} → {f}" + (f" • Empresa {emp}" if emp else "")
     return (
-        f"📊 **Resumo Financeiro**\n"
-        f"🗓️ {subtitulo}\n\n"
-        f"💵 Receitas: {money(total_receitas)}\n"
-        f"💸 Despesas: {money(total_despesas)}\n"
-        f"📈 Resultado: {money(lucro)}"
+        f"📊 **Resumo Financeiro**\n\n"
+        f"💵 Receitas: R$ {total_receitas:,.2f}\n"
+        f"💸 Despesas: R$ {total_despesas:,.2f}\n"
+        f"📈 Resultado: R$ {lucro:,.2f}"
     )
 
 # ============================================================
-# 🏗️ Gastos por obra
+# 🏗️ GASTOS POR OBRA
 # ============================================================
-def gastos_por_obra(**params) -> str:
+def gastos_por_obra(params=None):
+    logging.info("📚 Coletando despesas agrupadas por obra...")
     dados = sienge_get("bills", params)
-    obras: Dict[str, float] = {}
-    for x in dados:
+    obras = {}
+
+    for item in dados:
         obra = (
-            (x.get("constructionSite") or {}).get("name")
-            or x.get("constructionSiteName")
+            item.get("buildingCost", {})
+            .get("name")
+            or item.get("notes", "")
             or "Obra não informada"
         )
-        valor = float(x.get("amountValue") or x.get("amount") or 0)
+        valor = float(item.get("totalValueAmount", 0) or 0)
         obras[obra] = obras.get(obra, 0) + valor
 
     if not obras:
-        return "📭 Nenhum gasto encontrado nesse período/empresa."
+        return "📭 Nenhum gasto encontrado nas contas a pagar."
 
-    i = params.get("startDate") or periodo_padrao()[0]
-    f = params.get("endDate") or periodo_padrao()[1]
-    emp = params.get("enterpriseId")
-    header = f"🗓️ {i} → {f}" + (f" • Empresa {emp}" if emp else "")
-
-    linhas = [f"🏗️ {obra}: {money(v)}" for obra, v in sorted(obras.items(), key=lambda kv: kv[1], reverse=True)]
-    return "📊 **Gastos por Obra**\n" + header + "\n\n" + "\n".join(linhas)
+    linhas = [f"🏗️ {obra[:50]}...: R$ {valor:,.2f}" for obra, valor in obras.items()]
+    return "📊 **Gastos por Obra**\n\n" + "\n".join(linhas)
 
 # ============================================================
-# 🧮 Gastos por centro de custo
+# 🧮 GASTOS POR CENTRO DE CUSTO
 # ============================================================
-def gastos_por_centro_custo(**params) -> str:
+def gastos_por_centro_custo(params=None):
+    logging.info("📊 Calculando gastos por centro de custo...")
     dados = sienge_get("bills", params)
-    centros: Dict[str, float] = {}
-    for x in dados:
-        cc = (x.get("costCenter") or {}).get("name") or x.get("costCenterName") or "Centro não informado"
-        valor = float(x.get("amountValue") or x.get("amount") or 0)
+    centros = {}
+
+    for item in dados:
+        cc = item.get("departmentCost", {}).get("name") or "Centro de custo não informado"
+        valor = float(item.get("totalValueAmount", 0) or 0)
         centros[cc] = centros.get(cc, 0) + valor
 
     if not centros:
-        return "📭 Nenhum dado de centros de custo nesse período/empresa."
+        return "📭 Nenhum dado encontrado para centros de custo."
 
-    i = params.get("startDate") or periodo_padrao()[0]
-    f = params.get("endDate") or periodo_padrao()[1]
-    emp = params.get("enterpriseId")
-    header = f"🗓️ {i} → {f}" + (f" • Empresa {emp}" if emp else "")
-
-    linhas = [f"📂 {cc}: {money(v)}" for cc, v in sorted(centros.items(), key=lambda kv: kv[1], reverse=True)]
-    return "📊 **Gastos por Centro de Custo**\n" + header + "\n\n" + "\n".join(linhas)
-
-# ============================================================
-# 🧱 Relatório consolidado p/ Dashboard/IA
-# ============================================================
-def gerar_relatorio_json(**params) -> Dict[str, Any]:
-    pagar = sienge_get("bills", params)
-    receber = sienge_get("accounts-receivable/receivable-bills", params)
-
-    total_receitas = sum(float(x.get("amountValue") or x.get("amount") or 0) for x in receber)
-    total_despesas = sum(float(x.get("amountValue") or x.get("amount") or 0) for x in pagar)
-    lucro = total_receitas - total_despesas
-
-    despesas_normalizadas = []
-    for x in pagar:
-        despesas_normalizadas.append({
-            "data": x.get("issueDate") or x.get("dueDate"),
-            "empresa": (x.get("enterprise") or {}).get("name") or x.get("enterpriseName"),
-            "fornecedor": (x.get("supplier") or {}).get("name") or x.get("supplierName"),
-            "obra": (x.get("constructionSite") or {}).get("name") or x.get("constructionSiteName"),
-            "centro_custo": (x.get("costCenter") or {}).get("name") or x.get("costCenterName"),
-            "conta_financeira": (x.get("financialAccount") or {}).get("name") or x.get("financialAccountName"),
-            "status": x.get("status") or x.get("situation") or "-",
-            "descricao": x.get("description") or x.get("history") or "-",
-            "valor_total": float(x.get("amountValue") or x.get("amount") or 0),
-        })
-
-    return {
-        "periodo": {
-            "inicio": params.get("startDate") or periodo_padrao()[0],
-            "fim": params.get("endDate") or periodo_padrao()[1],
-            "enterpriseId": params.get("enterpriseId"),
-        },
-        "dre": {
-            "receitas": total_receitas,
-            "despesas": total_despesas,
-            "lucro": lucro,
-            "formatado": {
-                "receitas": money(total_receitas),
-                "despesas": money(total_despesas),
-                "lucro": money(lucro),
-            },
-        },
-        "todas_despesas": despesas_normalizadas,
-    }
+    linhas = [f"📂 {cc}: R$ {valor:,.2f}" for cc, valor in centros.items()]
+    return "📊 **Gastos por Centro de Custo**\n\n" + "\n".join(linhas)
