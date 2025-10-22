@@ -7,7 +7,7 @@ from base64 import b64encode
 # ============================================================
 # 🚀 IDENTIFICAÇÃO DA VERSÃO
 # ============================================================
-logging.warning("🚀 Rodando versão 3.1 do sienge_financeiro.py (DRE + Fluxo + Obras + Fornecedores)")
+logging.warning("🚀 Rodando versão 4.0 do sienge_financeiro.py (dados completos + integração IA)")
 
 # ============================================================
 # 🔐 CONFIGURAÇÕES DE AUTENTICAÇÃO SIENGE
@@ -57,16 +57,10 @@ def resumo_financeiro_dre():
     logging.info("📊 Consultando DRE resumido...")
 
     inicio, fim = get_date(30)
-    logging.info(f"📅 Período: {inicio} até {fim}")
-
-    # --- Contas a pagar ---
     pagar = get("bills", {"startDate": inicio, "endDate": fim})
     total_pagar = sum(i.get("totalInvoiceAmount", 0) for i in pagar.get("results", []))
-
-    # --- Contas a receber ---
     receber = get("accounts-receivable/receivable-bills", {"startDate": inicio, "endDate": fim})
     total_receber = sum(i.get("amount", 0) for i in receber.get("results", []))
-
     lucro = total_receber - total_pagar
 
     dre = {
@@ -80,121 +74,73 @@ def resumo_financeiro_dre():
             "lucro": money(lucro),
         },
     }
-
     logging.info(f"💰 Receita: {money(total_receber)} | Despesa: {money(total_pagar)} | Lucro: {money(lucro)}")
     return dre
 
 # ============================================================
-# 📈 2️⃣ FLUXO DE CAIXA (Entradas e Saídas por dia)
+# 🧾 2️⃣ TODAS AS DESPESAS DETALHADAS
 # ============================================================
-def fluxo_caixa(dias=30):
-    logging.info("📊 Gerando fluxo de caixa diário...")
-
+def todas_despesas_detalhadas(dias=90):
+    logging.info("📚 Buscando todas as despesas detalhadas...")
     inicio, fim = get_date(dias)
     bills = get("bills", {"startDate": inicio, "endDate": fim}).get("results", [])
-    df = pd.DataFrame(bills)
-
-    if df.empty:
-        logging.warning("⚠️ Nenhum dado financeiro encontrado.")
-        return []
-
-    df["issueDate"] = pd.to_datetime(df["issueDate"], errors="coerce")
-    df["totalInvoiceAmount"] = pd.to_numeric(df["totalInvoiceAmount"], errors="coerce").fillna(0)
-
-    fluxo = (
-        df.groupby(df["issueDate"].dt.date)["totalInvoiceAmount"]
-        .sum()
-        .reset_index()
-        .rename(columns={"issueDate": "data", "totalInvoiceAmount": "valor"})
-    )
-
-    fluxo["tipo"] = "Saída"
-    fluxo = fluxo.to_dict(orient="records")
-    logging.info(f"📅 {len(fluxo)} dias processados no fluxo de caixa")
-    return fluxo
-
-# ============================================================
-# 🏗️ 3️⃣ GASTOS POR OBRA
-# ============================================================
-def gastos_por_obra():
-    logging.info("🏗️ Consultando gastos por obra...")
-    inicio, fim = get_date(60)
-    bills = get("bills", {"startDate": inicio, "endDate": fim}).get("results", [])
     dados = []
 
     for b in bills:
-        bill_id = b.get("id")
-        total = b.get("totalInvoiceAmount", 0)
-        obras = get(f"bills/{bill_id}/buildings-cost").get("results", [])
-        for o in obras:
-            dados.append({
-                "obra": o.get("buildingName", "Sem nome"),
-                "empresa": o.get("costEstimationSheetName", "Não informado"),
-                "valor": total * (o.get("percentage", 0) / 100),
-            })
+        dados.append({
+            "empresa": b.get("companyName", "Não informada"),
+            "fornecedor": b.get("creditorName", "Não informado"),
+            "conta_financeira": b.get("paymentCategoryName", "Não informada"),
+            "obra": b.get("buildingName", "Sem obra"),
+            "status": b.get("billStatus", "Sem status"),
+            "data_emissao": b.get("issueDate"),
+            "data_pagamento": b.get("payOffDate"),
+            "valor_total": b.get("totalInvoiceAmount", 0),
+        })
 
     df = pd.DataFrame(dados)
+    logging.info(f"📦 {len(df)} registros financeiros detalhados coletados.")
+    return df
+
+# ============================================================
+# 📈 3️⃣ FUNÇÕES DE AGRUPAMENTO
+# ============================================================
+def gastos_por_obra(dias=60):
+    df = todas_despesas_detalhadas(dias)
     if df.empty:
         return []
+    df = df.groupby(["empresa", "obra"])["valor_total"].sum().reset_index()
+    df.rename(columns={"valor_total": "valor"}, inplace=True)
+    return df.to_dict(orient="records")
 
-    df = df.groupby(["empresa", "obra"])["valor"].sum().reset_index()
-    logging.info(f"🏗️ {len(df)} obras encontradas.")
+
+def gastos_por_centro_custo(dias=60):
+    df = todas_despesas_detalhadas(dias)
+    if df.empty:
+        return []
+    df = df.groupby("conta_financeira")["valor_total"].sum().reset_index()
+    df.rename(columns={"conta_financeira": "centro_custo", "valor_total": "valor"}, inplace=True)
+    return df.to_dict(orient="records")
+
+
+def gastos_por_fornecedor(dias=60):
+    df = todas_despesas_detalhadas(dias)
+    if df.empty:
+        return []
+    df = df.groupby("fornecedor")["valor_total"].sum().reset_index()
+    df = df.sort_values(by="valor_total", ascending=False)
+    df.rename(columns={"valor_total": "valor"}, inplace=True)
     return df.to_dict(orient="records")
 
 # ============================================================
-# 🧾 4️⃣ GASTOS POR CENTRO DE CUSTO
-# ============================================================
-def gastos_por_centro_custo():
-    logging.info("🏢 Consultando gastos por centro de custo...")
-    inicio, fim = get_date(60)
-    bills = get("bills", {"startDate": inicio, "endDate": fim}).get("results", [])
-    dados = []
-
-    for b in bills:
-        bill_id = b.get("id")
-        total = b.get("totalInvoiceAmount", 0)
-        centros = get(f"bills/{bill_id}/budget-categories").get("results", [])
-        for c in centros:
-            dados.append({
-                "centro_custo": c.get("paymentCategoriesId", "Não informado"),
-                "valor": total * (c.get("percentage", 0) / 100),
-            })
-
-    df = pd.DataFrame(dados)
-    if df.empty:
-        return []
-
-    df = df.groupby("centro_custo")["valor"].sum().reset_index()
-    logging.info(f"🏢 {len(df)} centros de custo processados.")
-    return df.to_dict(orient="records")
-
-# ============================================================
-# 👥 5️⃣ GASTOS POR FORNECEDOR
-# ============================================================
-def gastos_por_fornecedor():
-    logging.info("👥 Consultando gastos por fornecedor...")
-    inicio, fim = get_date(60)
-    bills = get("bills", {"startDate": inicio, "endDate": fim}).get("results", [])
-
-    df = pd.DataFrame(bills)
-    if df.empty:
-        return []
-
-    df = df.groupby("creditorId")["totalInvoiceAmount"].sum().reset_index()
-    df = df.sort_values(by="totalInvoiceAmount", ascending=False)
-    df.rename(columns={"creditorId": "fornecedor", "totalInvoiceAmount": "valor"}, inplace=True)
-
-    logging.info(f"👥 {len(df)} fornecedores processados.")
-    return df.to_dict(orient="records")
-
-# ============================================================
-# 📊 6️⃣ RELATÓRIO UNIFICADO
+# 📊 4️⃣ RELATÓRIO UNIFICADO
 # ============================================================
 def gerar_relatorio_json():
+    df = todas_despesas_detalhadas()
     return {
         "dre": resumo_financeiro_dre(),
-        "fluxo_caixa": fluxo_caixa(),
-        "gastos_por_obra": gastos_por_obra(),
-        "gastos_por_centro_custo": gastos_por_centro_custo(),
-        "gastos_por_fornecedor": gastos_por_fornecedor(),
+        "obras": gastos_por_obra(),
+        "centros_custo": gastos_por_centro_custo(),
+        "fornecedores": gastos_por_fornecedor(),
+        "todas_despesas": df.to_dict(orient="records"),
     }
