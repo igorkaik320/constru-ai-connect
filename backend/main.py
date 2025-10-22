@@ -2,13 +2,11 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import logging
+
+# === Importações dos módulos do Sienge ===
 from sienge.sienge_pedidos import listar_pedidos_pendentes, itens_pedido, autorizar_pedido, reprovar_pedido
 from sienge.sienge_boletos import buscar_boletos_por_cpf
-from sienge.sienge_financeiro import (
-    resumo_financeiro_dre,
-    gastos_por_obra,
-    gastos_por_centro_custo,
-)
+from sienge.sienge_financeiro import resumo_financeiro_dre, gastos_por_obra, gastos_por_centro_custo
 from sienge.sienge_ia import gerar_analise_financeira
 
 # ============================================================
@@ -30,11 +28,13 @@ class Message(BaseModel):
     user: str
     text: str
 
+
 def money(v):
     try:
         return f"R$ {float(v):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
     except:
         return "R$ 0,00"
+
 
 # ============================================================
 # 🚀 ENDPOINT PRINCIPAL
@@ -42,6 +42,7 @@ def money(v):
 @app.get("/")
 def root():
     return {"message": "🚀 Backend da Constru.IA ativo com sucesso!"}
+
 
 @app.post("/mensagem")
 def mensagem(msg: Message):
@@ -69,7 +70,13 @@ def mensagem(msg: Message):
                 f"💸 Despesas: {dre['formatado']['despesas']}\n"
                 f"📈 Lucro: {dre['formatado']['lucro']}"
             )
-            return {"text": resposta}
+            return {
+                "text": resposta,
+                "buttons": [
+                    {"label": "🏗️ Gastos por Obra", "action": "gastos_por_obra"},
+                    {"label": "🏢 Centro de Custo", "action": "gastos_por_centro_custo"},
+                ],
+            }
 
         # ============================================================
         # 🏗️ GASTOS POR OBRA
@@ -79,9 +86,7 @@ def mensagem(msg: Message):
             if not obras:
                 return {"text": "⚠️ Nenhum gasto encontrado por obra no período."}
 
-            linhas = [
-                f"🏗️ {o['obra']} — {money(o['valor'])}" for o in obras
-            ]
+            linhas = [f"🏗️ {o.get('obra', 'Sem nome')} — {money(o.get('valor', 0))}" for o in obras]
             resposta = "📊 **Gastos por Obra:**\n\n" + "\n".join(linhas)
             return {"text": resposta}
 
@@ -93,9 +98,7 @@ def mensagem(msg: Message):
             if not centros:
                 return {"text": "⚠️ Nenhum gasto encontrado por centro de custo."}
 
-            linhas = [
-                f"🏢 Centro {c['centro_custo']} — {money(c['valor'])}" for c in centros
-            ]
+            linhas = [f"🏢 {c.get('centro_custo', 'Sem nome')} — {money(c.get('valor', 0))}" for c in centros]
             resposta = "📊 **Gastos por Centro de Custo:**\n\n" + "\n".join(linhas)
             return {"text": resposta}
 
@@ -107,7 +110,6 @@ def mensagem(msg: Message):
             if not cpf:
                 return {"text": "⚠️ Por favor, informe o CPF para buscar boletos."}
 
-            logging.info(f"🔍 Buscando boletos para CPF {cpf}")
             boletos = buscar_boletos_por_cpf(cpf)
 
             if isinstance(boletos, str):
@@ -123,7 +125,13 @@ def mensagem(msg: Message):
             else:
                 resposta = "⚠️ Nenhum boleto disponível para esse CPF."
 
-            return {"text": resposta}
+            return {
+                "text": resposta,
+                "buttons": [
+                    {"label": "📋 Pedidos Pendentes", "action": "pedidos_pendentes"},
+                    {"label": "💰 Resumo Financeiro", "action": "resumo_financeiro"},
+                ],
+            }
 
         # ============================================================
         # 📋 PEDIDOS PENDENTES
@@ -133,12 +141,20 @@ def mensagem(msg: Message):
             if not pedidos:
                 return {"text": "⚠️ Nenhum pedido pendente encontrado."}
 
-            linhas = [
-                f"📦 Pedido {p['id']} — {p['fornecedor']} — {money(p['valor_total'])}"
-                for p in pedidos
-            ]
+            linhas = []
+            for p in pedidos:
+                fornecedor = p.get("fornecedor") or p.get("supplierName") or "Fornecedor não informado"
+                valor = p.get("valor_total") or p.get("totalValue") or 0
+                linhas.append(f"📦 Pedido {p.get('id')} — {fornecedor} — {money(valor)}")
+
             resposta = "📋 **Pedidos Pendentes:**\n\n" + "\n".join(linhas)
-            return {"text": resposta}
+            return {
+                "text": resposta,
+                "buttons": [
+                    {"label": "Ver Itens do Pedido", "action": "itens_pedido"},
+                    {"label": "Autorizar Pedido", "action": "autorizar_pedido"},
+                ],
+            }
 
         # ============================================================
         # 🔍 ITENS DO PEDIDO
@@ -174,7 +190,7 @@ def mensagem(msg: Message):
             return {"text": f"🚫 Pedido {pedido_id} reprovado com sucesso!" if r else f"❌ Erro ao reprovar pedido {pedido_id}."}
 
         # ============================================================
-        # 🤖 PADRÃO (NÃO RECONHECIDO)
+        # 🤖 PADRÃO (MENU PRINCIPAL)
         # ============================================================
         else:
             return {
@@ -188,7 +204,14 @@ def mensagem(msg: Message):
                     "🏢 Gastos por Centro de Custo\n"
                     "🤖 Análise Financeira Inteligente\n\n"
                     "Digite o comando desejado 👇"
-                )
+                ),
+                "buttons": [
+                    {"label": "📋 Pedidos Pendentes", "action": "pedidos_pendentes"},
+                    {"label": "💰 Resumo Financeiro", "action": "resumo_financeiro"},
+                    {"label": "💳 Segunda Via de Boletos", "action": "buscar_boletos_cpf"},
+                    {"label": "🏗️ Gastos por Obra", "action": "gastos_por_obra"},
+                    {"label": "🤖 Analisar Finanças", "action": "analisar_finanças"},
+                ],
             }
 
     except Exception as e:
