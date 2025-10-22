@@ -1,146 +1,89 @@
 import requests
 import logging
-import datetime
-import pandas as pd
-from base64 import b64encode
+import os
 
 # ============================================================
-# 🚀 IDENTIFICAÇÃO DA VERSÃO
+# ⚙️ CONFIGURAÇÕES
 # ============================================================
-logging.warning("🚀 Rodando versão 4.0 do sienge_financeiro.py (dados completos + integração IA)")
-
-# ============================================================
-# 🔐 CONFIGURAÇÕES DE AUTENTICAÇÃO SIENGE
-# ============================================================
-subdominio = "cctcontrol"
-usuario = "cctcontrol-api"
-senha = "9SQ2MaNrFOeZOOuOAqeSRy7bYWYDDf85"
-
-BASE_URL = f"https://api.sienge.com.br/{subdominio}/public/api/v1"
-_token = b64encode(f"{usuario}:{senha}".encode()).decode()
-
-json_headers = {
-    "Authorization": f"Basic {_token}",
-    "accept": "application/json",
-    "Content-Type": "application/json",
-}
+BASE_URL = "https://api.sienge.com.br/cctcontrol/public/api/v1"
+SIENGE_USER = os.getenv("SIENGE_USER", "seu_usuario_api")
+SIENGE_PASS = os.getenv("SIENGE_PASS", "sua_senha_api")
 
 # ============================================================
-# 🧮 FUNÇÕES AUXILIARES
+# 🧾 FUNÇÃO BASE DE REQUISIÇÃO
 # ============================================================
-def money(v):
-    try:
-        return f"R$ {float(v):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-    except:
-        return "R$ 0,00"
-
-
-def get_date(days_ago=30):
-    hoje = datetime.date.today()
-    return (hoje - datetime.timedelta(days=days_ago)).isoformat(), hoje.isoformat()
-
-
-def get(endpoint, params=None):
+def sienge_get(endpoint):
     url = f"{BASE_URL}/{endpoint}"
     logging.info(f"➡️ GET {url}")
-    r = requests.get(url, headers=json_headers, params=params, timeout=30)
+    r = requests.get(url, auth=(SIENGE_USER, SIENGE_PASS))
     logging.info(f"📦 Status: {r.status_code}")
-    if r.status_code == 200:
-        return r.json()
-    logging.error(f"❌ Erro na requisição: {r.status_code} -> {r.text[:200]}")
-    return {}
+    if r.status_code != 200:
+        logging.warning(f"Erro: {r.text}")
+        return []
+    return r.json().get("results", [])
 
 # ============================================================
-# 💰 1️⃣ RESUMO FINANCEIRO / DRE
+# 💰 RESUMO FINANCEIRO
 # ============================================================
-def resumo_financeiro_dre():
+def resumo_financeiro():
     logging.info("📊 Consultando DRE resumido...")
 
-    inicio, fim = get_date(30)
-    pagar = get("bills", {"startDate": inicio, "endDate": fim})
-    total_pagar = sum(i.get("totalInvoiceAmount", 0) for i in pagar.get("results", []))
-    receber = get("accounts-receivable/receivable-bills", {"startDate": inicio, "endDate": fim})
-    total_receber = sum(i.get("amount", 0) for i in receber.get("results", []))
-    lucro = total_receber - total_pagar
+    contas_pagar = sienge_get("bills")
+    contas_receber = sienge_get("accounts-receivable/receivable-bills")
 
-    dre = {
-        "periodo": {"inicio": inicio, "fim": fim},
-        "receitas": total_receber,
-        "despesas": total_pagar,
-        "lucro": lucro,
-        "formatado": {
-            "receitas": money(total_receber),
-            "despesas": money(total_pagar),
-            "lucro": money(lucro),
-        },
-    }
-    logging.info(f"💰 Receita: {money(total_receber)} | Despesa: {money(total_pagar)} | Lucro: {money(lucro)}")
-    return dre
+    total_receitas = sum(
+        float(c.get("amountValue", 0) or 0) for c in contas_receber if not c.get("cancelled")
+    )
+    total_despesas = sum(
+        float(c.get("amountValue", 0) or 0) for c in contas_pagar if not c.get("cancelled")
+    )
+    lucro = total_receitas - total_despesas
+
+    logging.info(f"💰 Receita: {total_receitas} | Despesa: {total_despesas} | Lucro: {lucro}")
+
+    return (
+        f"📊 **Resumo Financeiro:**\n\n"
+        f"💵 Receitas: R$ {total_receitas:,.2f}\n"
+        f"💸 Despesas: R$ {total_despesas:,.2f}\n"
+        f"📈 Resultado: R$ {lucro:,.2f}"
+    )
 
 # ============================================================
-# 🧾 2️⃣ TODAS AS DESPESAS DETALHADAS
+# 🏗️ GASTOS POR OBRA
 # ============================================================
-def todas_despesas_detalhadas(dias=90):
+def gastos_por_obra():
     logging.info("📚 Buscando todas as despesas detalhadas...")
-    inicio, fim = get_date(dias)
-    bills = get("bills", {"startDate": inicio, "endDate": fim}).get("results", [])
-    dados = []
 
-    for b in bills:
-        dados.append({
-            "empresa": b.get("companyName", "Não informada"),
-            "fornecedor": b.get("creditorName", "Não informado"),
-            "conta_financeira": b.get("paymentCategoryName", "Não informada"),
-            "obra": b.get("buildingName", "Sem obra"),
-            "status": b.get("billStatus", "Sem status"),
-            "data_emissao": b.get("issueDate"),
-            "data_pagamento": b.get("payOffDate"),
-            "valor_total": b.get("totalInvoiceAmount", 0),
-        })
+    dados = sienge_get("bills")
+    obras = {}
 
-    df = pd.DataFrame(dados)
-    logging.info(f"📦 {len(df)} registros financeiros detalhados coletados.")
-    return df
+    for item in dados:
+        obra = item.get("constructionSite", {}).get("name") or "Obra não informada"
+        valor = float(item.get("amountValue", 0) or 0)
+        obras[obra] = obras.get(obra, 0) + valor
+
+    if not obras:
+        return "📭 Nenhum gasto encontrado."
+
+    linhas = [f"🏗️ {obra}: R$ {valor:,.2f}" for obra, valor in obras.items()]
+    return "📊 **Gastos por Obra:**\n\n" + "\n".join(linhas)
 
 # ============================================================
-# 📈 3️⃣ FUNÇÕES DE AGRUPAMENTO
+# 🧮 GASTOS POR CENTRO DE CUSTO
 # ============================================================
-def gastos_por_obra(dias=60):
-    df = todas_despesas_detalhadas(dias)
-    if df.empty:
-        return []
-    df = df.groupby(["empresa", "obra"])["valor_total"].sum().reset_index()
-    df.rename(columns={"valor_total": "valor"}, inplace=True)
-    return df.to_dict(orient="records")
+def gastos_por_centro_custo():
+    logging.info("📊 Calculando gastos por centro de custo...")
 
+    dados = sienge_get("bills")
+    centros = {}
 
-def gastos_por_centro_custo(dias=60):
-    df = todas_despesas_detalhadas(dias)
-    if df.empty:
-        return []
-    df = df.groupby("conta_financeira")["valor_total"].sum().reset_index()
-    df.rename(columns={"conta_financeira": "centro_custo", "valor_total": "valor"}, inplace=True)
-    return df.to_dict(orient="records")
+    for item in dados:
+        cc = item.get("costCenter", {}).get("name") or "Centro não informado"
+        valor = float(item.get("amountValue", 0) or 0)
+        centros[cc] = centros.get(cc, 0) + valor
 
+    if not centros:
+        return "📭 Nenhum dado encontrado."
 
-def gastos_por_fornecedor(dias=60):
-    df = todas_despesas_detalhadas(dias)
-    if df.empty:
-        return []
-    df = df.groupby("fornecedor")["valor_total"].sum().reset_index()
-    df = df.sort_values(by="valor_total", ascending=False)
-    df.rename(columns={"valor_total": "valor"}, inplace=True)
-    return df.to_dict(orient="records")
-
-# ============================================================
-# 📊 4️⃣ RELATÓRIO UNIFICADO
-# ============================================================
-def gerar_relatorio_json():
-    df = todas_despesas_detalhadas()
-    return {
-        "dre": resumo_financeiro_dre(),
-        "obras": gastos_por_obra(),
-        "centros_custo": gastos_por_centro_custo(),
-        "fornecedores": gastos_por_fornecedor(),
-        "todas_despesas": df.to_dict(orient="records"),
-    }
+    linhas = [f"📂 {cc}: R$ {valor:,.2f}" for cc, valor in centros.items()]
+    return "📊 **Gastos por Centro de Custo:**\n\n" + "\n".join(linhas)
