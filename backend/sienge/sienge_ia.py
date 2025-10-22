@@ -5,57 +5,42 @@ import pandas as pd
 
 logging.warning("🤖 Rodando módulo sienge_ia.py (análises automáticas de dados financeiros)")
 
-# ============================================================
-# 🔐 CLIENTE OPENAI
-# ============================================================
-# ⚠️ Certifique-se de ter a variável OPENAI_API_KEY configurada
-# no ambiente (no Render: "Environment Variables").
+# ⚠️ Configure OPENAI_API_KEY no Render
 client = OpenAI()
 
-# ============================================================
-# 🧠 FUNÇÃO PRINCIPAL DE ANÁLISE
-# ============================================================
 def gerar_analise_financeira(titulo: str, dados: pd.DataFrame) -> str:
-    """
-    Gera uma análise executiva dos dados financeiros (receitas, despesas, obras, fornecedores, etc.)
-    usando o modelo GPT.
-    """
+    """Gera uma análise executiva com base no DataFrame de despesas/receitas."""
     try:
-        if dados.empty:
+        if dados is None or len(dados) == 0:
             return "⚠️ Nenhum dado encontrado para análise."
 
-        amostra = dados.head(25).to_markdown(index=False)
-        total = len(dados)
+        # amostra compacta para contexto
+        preview = dados.head(40).to_markdown(index=False)
 
         prompt = f"""
-        Você é um analista financeiro especialista no setor da construção civil.
-        Analise o relatório abaixo e gere uma análise gerencial detalhada e clara.
+Você é um analista financeiro especialista em construção civil.
+Analise os dados a seguir e produza:
+1) Principais destaques (receitas, despesas, lucros).
+2) Obras/centros/fornecedores de maior impacto.
+3) Alertas de risco ou anomalias (variações, concentração, sazonalidade).
+4) Recomendações práticas (redução de custos, renegociação, priorização de obras).
+Responda em formato executivo, com bullet points e linguagem simples.
 
-        **Instruções:**
-        - Identifique tendências de receitas e despesas.
-        - Destaque obras, fornecedores ou centros de custo com maiores gastos.
-        - Detecte possíveis anomalias ou oportunidades de otimização.
-        - Termine com um resumo executivo em linguagem de negócio.
-
-        **Relatório:**
-        - Título: {titulo}
-        - Registros: {total}
-        - Amostra:
-        {amostra}
+Título: {titulo}
+Amostra (até 40 linhas):
+{preview}
         """
 
-        resposta = client.chat.completions.create(
+        resp = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
-                {"role": "system", "content": "Você é um consultor financeiro especializado em construção civil."},
+                {"role": "system", "content": "Você é um consultor financeiro sênior para construção civil."},
                 {"role": "user", "content": prompt},
             ],
-            temperature=0.5,
+            temperature=0.4,
             max_tokens=900,
         )
-
-        return resposta.choices[0].message.content
-
+        return resp.choices[0].message.content
     except Exception as e:
-        logging.exception("Erro ao gerar análise financeira:")
+        logging.exception("Erro na IA:")
         return f"❌ Erro ao gerar análise financeira: {e}"
