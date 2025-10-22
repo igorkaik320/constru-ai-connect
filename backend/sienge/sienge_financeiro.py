@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 # ============================================================
 # 🚀 IDENTIFICAÇÃO DA VERSÃO
 # ============================================================
-logging.warning("🚀 Rodando versão 4.3 do sienge_financeiro.py (valores corrigidos + modo debug)")
+logging.warning("🚀 Rodando versão 4.4 do sienge_financeiro.py (compatibilidade kwargs + debug ativo)")
 
 # ============================================================
 # 🔐 CONFIGURAÇÕES DE AUTENTICAÇÃO SIENGE
@@ -74,8 +74,11 @@ def sienge_get(endpoint, params=None):
 # ============================================================
 # 💰 RESUMO FINANCEIRO (DRE SIMPLIFICADO)
 # ============================================================
-def resumo_financeiro(params=None):
+def resumo_financeiro(params=None, **kwargs):
     """Resumo geral de receitas, despesas e lucro."""
+    if not params:
+        params = kwargs or {}
+
     logging.info("📊 DRE Resumido (com período/empresa opcionais)")
 
     contas_pagar = sienge_get("bills", params)
@@ -95,7 +98,10 @@ def resumo_financeiro(params=None):
 # ============================================================
 # 🏗️ GASTOS POR OBRA
 # ============================================================
-def gastos_por_obra(params=None):
+def gastos_por_obra(params=None, **kwargs):
+    if not params:
+        params = kwargs or {}
+
     logging.info("📚 Coletando despesas agrupadas por obra...")
     dados = sienge_get("bills", params)
     obras = {}
@@ -118,7 +124,10 @@ def gastos_por_obra(params=None):
 # ============================================================
 # 🧮 GASTOS POR CENTRO DE CUSTO
 # ============================================================
-def gastos_por_centro_custo(params=None):
+def gastos_por_centro_custo(params=None, **kwargs):
+    if not params:
+        params = kwargs or {}
+
     logging.info("📊 Calculando gastos por centro de custo...")
     dados = sienge_get("bills", params)
     centros = {}
@@ -135,14 +144,12 @@ def gastos_por_centro_custo(params=None):
     return "📊 **Gastos por Centro de Custo**\n\n" + "\n".join(linhas)
 
 # ============================================================
-# 🧩 NOVA FUNÇÃO — RELATÓRIO JSON (para dashboard e IA)
+# 🧩 RELATÓRIO JSON (para dashboard e IA)
 # ============================================================
-def gerar_relatorio_json(**params):
-    """
-    Gera um dicionário completo para o dashboard:
-    - todas_despesas (lista detalhada)
-    - dre (valores formatados)
-    """
+def gerar_relatorio_json(params=None, **kwargs):
+    """Gera um dicionário completo para o dashboard."""
+    if not params:
+        params = kwargs or {}
 
     contas_pagar = sienge_get("bills", params)
     contas_receber = sienge_get("accounts-receivable/receivable-bills", params)
@@ -151,7 +158,6 @@ def gerar_relatorio_json(**params):
     total_despesas = sum(float(c.get("totalValueAmount", 0) or 0) for c in contas_pagar)
     lucro = total_receitas - total_despesas
 
-    # === Formatação estilo dashboard ===
     dre_formatado = {
         "receitas": f"R$ {total_receitas:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."),
         "despesas": f"R$ {total_despesas:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."),
@@ -161,10 +167,11 @@ def gerar_relatorio_json(**params):
     todas_despesas = []
     for item in contas_pagar:
         todas_despesas.append({
-            "obra": item.get("buildingCost", {}).get("name") or "N/A",
+            "empresa": item.get("enterprise", {}).get("name") or "N/A",
             "fornecedor": item.get("provider", {}).get("name") or "N/A",
             "centro_custo": item.get("departmentCost", {}).get("name") or "N/A",
             "conta_financeira": item.get("financialAccount", {}).get("name") or "N/A",
+            "obra": item.get("buildingCost", {}).get("name") or "N/A",
             "status": item.get("status", "N/A"),
             "valor_total": float(item.get("totalValueAmount", 0) or 0),
             "data_vencimento": item.get("dueDate", "N/A"),
