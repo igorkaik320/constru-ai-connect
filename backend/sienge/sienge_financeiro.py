@@ -1,10 +1,11 @@
 import requests
 import logging
 import time
+import json
 from base64 import b64encode
 from datetime import datetime, timedelta
 
-logging.warning("🚀 Rodando versão 5.0 do sienge_financeiro.py (retry + sleep + dados completos)")
+logging.warning("🚀 Rodando versão 5.1 do sienge_financeiro.py (debug de retorno das APIs Sienge)")
 
 # ============================================================
 # 🔐 Configurações de autenticação
@@ -54,7 +55,12 @@ def sienge_get(endpoint, params=None, max_retries=3):
 
             if r.status_code == 200:
                 data = r.json()
-                return data.get("results") or data
+                results = data.get("results") or data
+                logging.info(f"📊 {endpoint}: {len(results)} registros retornados.")
+                # Logar só os 2 primeiros itens para ver estrutura
+                if isinstance(results, list) and len(results) > 0:
+                    logging.info(json.dumps(results[:2], indent=2, ensure_ascii=False))
+                return results
 
             elif r.status_code == 429:
                 espera = 3 * tentativa
@@ -177,5 +183,7 @@ def gerar_relatorio_json(params=None, **kwargs):
             "documento": item.get("invoiceNumber", ""),
             "tipo_lancamento": item.get("type", ""),
         })
+
+    logging.info(f"🧾 Total despesas extraídas: {len(todas_despesas)}")
 
     return {"todas_despesas": todas_despesas, "dre": {"formatado": dre_formatado}}
