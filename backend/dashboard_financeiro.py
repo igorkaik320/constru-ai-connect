@@ -1,73 +1,129 @@
-import io
+import os
 import pandas as pd
-from pptx import Presentation
-from pptx.util import Inches, Pt
-from pptx.chart.data import CategoryChartData
-from pptx.enum.chart import XL_CHART_TYPE
+from jinja2 import Template
+import plotly.express as px
+import plotly.io as pio
+import openai
 
-def gerar_apresentacao_ppt(df: pd.DataFrame, dre: dict) -> bytes:
-    """Gera um arquivo PowerPoint com gráficos e KPIs financeiros."""
+def gerar_apresentacao_gamma(df: pd.DataFrame, dre: dict, titulo="Relatório Financeiro — Constru.IA") -> str:
+    """Gera relatório visual tipo Gamma (HTML interativo com IA e gráficos)."""
     try:
-        prs = Presentation()
-        slide_title = prs.slide_layouts[0]
-        slide_content = prs.slide_layouts[5]
+        # === KPIs principais ===
+        receitas = dre.get("receitas", "R$ 0,00")
+        despesas = dre.get("despesas", "R$ 0,00")
+        lucro = dre.get("lucro", "R$ 0,00")
 
-        # --- Slide 1: Título ---
-        slide = prs.slides.add_slide(slide_title)
-        slide.shapes.title.text = "Relatório Financeiro — Constru.IA"
-        slide.placeholders[1].text = "Resumo Automático via API Sienge + IA"
+        # === Gráfico principal ===
+        if "centro_custo" in df.columns and not df["centro_custo"].isnull().all():
+            graf = px.bar(
+                df.groupby("centro_custo")["valor_total"].sum().reset_index().sort_values("valor_total", ascending=False),
+                x="centro_custo",
+                y="valor_total",
+                title="Gastos por Centro de Custo",
+                color="valor_total",
+                color_continuous_scale="Blues",
+            )
+        else:
+            graf = px.bar(
+                df.groupby("fornecedor")["valor_total"].sum().reset_index().sort_values("valor_total", ascending=False),
+                x="fornecedor",
+                y="valor_total",
+                title="Gastos por Fornecedor",
+                color="valor_total",
+                color_continuous_scale="Blues",
+            )
+        graf.update_layout(
+            xaxis_title="", yaxis_title="Valor Total (R$)",
+            template="plotly_white", title_x=0.5
+        )
+        graf_html = pio.to_html(graf, full_html=False, include_plotlyjs="cdn")
 
-        # --- Slide 2: Indicadores Financeiros ---
-        slide = prs.slides.add_slide(slide_content)
-        slide.shapes.title.text = "📊 Indicadores Gerais"
-        tf = slide.shapes.add_textbox(Inches(1), Inches(1.5), Inches(8), Inches(3)).text_frame
-        tf.text = f"💵 Receitas: {dre.get('receitas', 'R$ 0,00')}\n💸 Despesas: {dre.get('despesas', 'R$ 0,00')}\n📈 Lucro: {dre.get('lucro', 'R$ 0,00')}"
+        # === Geração de análise via IA ===
+        analise_texto = ""
+        try:
+            prompt = f"""
+            Gere uma análise em até 3 parágrafos, de forma consultiva e objetiva,
+            com base nesses dados financeiros:
+            - Receitas: {receitas}
+            - Despesas: {despesas}
+            - Lucro: {lucro}
+            Aponte possíveis causas, tendências e oportunidades de otimização.
+            """
+            client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+            resp = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": "Você é um analista financeiro especializado em construtoras."},
+                    {"role": "user", "content": prompt},
+                ],
+            )
+            analise_texto = resp.choices[0].message.content.strip()
+        except Exception as e:
+            analise_texto = f"[⚠️ Erro ao gerar análise IA: {e}]"
 
-        # --- Slide 3: Gráfico de Gastos por Categoria ---
-        if "centro_custo" in df.columns:
-            data = df.groupby("centro_custo")["valor_total"].sum().reset_index().sort_values("valor_total", ascending=False).head(8)
-            chart_data = CategoryChartData()
-            chart_data.categories = data["centro_custo"]
-            chart_data.add_series("Gastos", data["valor_total"])
+        # === Template HTML estilizado ===
+        html_template = Template("""
+        <html>
+        <head>
+            <meta charset="utf-8">
+            <title>{{ titulo }}</title>
+            <style>
+                body {
+                    font-family: 'Segoe UI', sans-serif;
+                    margin: 40px;
+                    background: #f8faff;
+                    color: #222;
+                }
+                h1 { color: #003366; text-align: center; }
+                .kpis { display: flex; justify-content: center; gap: 20px; margin-top: 30px; }
+                .kpi {
+                    background: white; border-radius: 12px;
+                    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+                    padding: 20px; width: 25%; text-align: center;
+                }
+                .kpi h3 { color: #0050a0; margin-bottom: 10px; }
+                .kpi h2 { color: #004080; margin: 0; font-size: 1.6em; }
+                .grafico, .analise {
+                    background: white;
+                    border-radius: 12px;
+                    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+                    padding: 25px;
+                    margin-top: 40px;
+                }
+                .analise h3 { color: #004080; }
+                .footer { text-align: center; margin-top: 60px; font-size: 0.9em; color: #888; }
+            </style>
+        </head>
+        <body>
+            <h1>{{ titulo }}</h1>
+            <div class="kpis">
+                <div class="kpi"><h3>💵 Receitas</h3><h2>{{ receitas }}</h2></div>
+                <div class="kpi"><h3>💸 Despesas</h3><h2>{{ despesas }}</h2></div>
+                <div class="kpi"><h3>📈 Lucro</h3><h2>{{ lucro }}</h2></div>
+            </div>
 
-            slide = prs.slides.add_slide(slide_content)
-            slide.shapes.title.text = "🏗️ Gastos por Centro de Custo"
-            x, y, cx, cy = Inches(1), Inches(1.5), Inches(8), Inches(4.5)
-            graphic_frame = slide.shapes.add_chart(XL_CHART_TYPE.COLUMN_CLUSTERED, x, y, cx, cy, chart_data).chart
-            graphic_frame.has_legend = True
+            <div class="grafico">{{ grafico | safe }}</div>
 
-        # --- Slide 4: Tabela Resumo ---
-        slide = prs.slides.add_slide(slide_content)
-        slide.shapes.title.text = "📋 Amostra de Dados"
-        top = Inches(1.5)
-        left = Inches(0.8)
-        width = Inches(8.5)
-        height = Inches(0.8)
-        table_data = df.head(8)
-        rows, cols = table_data.shape
-        table = slide.shapes.add_table(rows+1, cols, left, top, width, height).table
-        for j, col in enumerate(table_data.columns):
-            table.cell(0, j).text = col
-        for i, row in table_data.iterrows():
-            for j, value in enumerate(row):
-                table.cell(i+1, j).text = str(value)[:25]
+            <div class="analise">
+                <h3>🔎 Análise Gerada pela IA</h3>
+                <p>{{ analise }}</p>
+            </div>
 
-        # --- Slide 5: Conclusão ---
-        slide = prs.slides.add_slide(slide_content)
-        slide.shapes.title.text = "💡 Conclusões e Recomendações"
-        slide.placeholders[0].text = (
-            "• Otimizar gastos nas obras de maior peso.\n"
-            "• Reavaliar fornecedores com concentração de custos.\n"
-            "• Priorizar obras com maior retorno e menor inadimplência.\n"
-            "• Reduzir despesas administrativas recorrentes."
+            <div class="footer">
+                Relatório gerado automaticamente via Constru.IA — Integração com Sienge.
+            </div>
+        </body>
+        </html>
+        """)
+
+        return html_template.render(
+            titulo=titulo,
+            receitas=receitas,
+            despesas=despesas,
+            lucro=lucro,
+            grafico=graf_html,
+            analise=analise_texto,
         )
 
-        # Exporta o arquivo em bytes
-        buffer = io.BytesIO()
-        prs.save(buffer)
-        buffer.seek(0)
-        return buffer.getvalue()
-
     except Exception as e:
-        print("Erro ao gerar PPT:", e)
-        return None
+        return f"<h1>Erro ao gerar relatório Gamma</h1><p>{e}</p>"
