@@ -5,7 +5,7 @@ import json
 from base64 import b64encode
 from datetime import datetime, timedelta
 
-logging.warning("🚀 Rodando versão 5.2 do sienge_financeiro.py (enriquecimento automático de nomes via links Sienge)")
+logging.warning("🚀 Rodando versão 5.2.1 do sienge_financeiro.py (enriquecimento + relatório interno de verificação)")
 
 # ============================================================
 # 🔐 Configurações de autenticação
@@ -29,6 +29,8 @@ json_headers = {
 _cache = {}
 
 def get_cached(url):
+    if not url:
+        return "N/A"
     if url in _cache:
         return _cache[url]
     try:
@@ -204,6 +206,11 @@ def gerar_relatorio_json(params=None, **kwargs):
         centro = get_cached(links.get("departmentsCost", "")) if "departmentsCost" in links else "N/A"
         obra = get_cached(links.get("buildingsCost", "")) if "buildingsCost" in links else "N/A"
 
+        descricao = item.get("notes") or item.get("description") or ""
+        if not isinstance(descricao, str):
+            descricao = str(descricao)
+        descricao = descricao[:200]
+
         todas_despesas.append({
             "empresa": empresa,
             "fornecedor": fornecedor,
@@ -212,7 +219,7 @@ def gerar_relatorio_json(params=None, **kwargs):
             "status": item.get("status", "N/A"),
             "valor_total": float(item.get("totalInvoiceAmount") or item.get("totalValueAmount") or 0),
             "data_vencimento": item.get("dueDate", "N/A"),
-            "descricao": item.get("notes", "")[:200],
+            "descricao": descricao,
             "documento": item.get("documentNumber", ""),
             "tipo_lancamento": item.get("originId", ""),
         })
@@ -224,3 +231,32 @@ def gerar_relatorio_json(params=None, **kwargs):
         "dre": {"formatado": dre_formatado},
         "total_registros": len(todas_despesas)
     }
+
+# ============================================================
+# 🧾 Relatório de Verificação (antes da IA)
+# ============================================================
+def gerar_relatorio_resumo(params=None, **kwargs):
+    rel = gerar_relatorio_json(params, **kwargs)
+    despesas = rel["todas_despesas"]
+
+    resumo_fornecedor = {}
+    resumo_centro = {}
+    resumo_obra = {}
+
+    for d in despesas:
+        resumo_fornecedor[d["fornecedor"]] = resumo_fornecedor.get(d["fornecedor"], 0) + d["valor_total"]
+        resumo_centro[d["centro_custo"]] = resumo_centro.get(d["centro_custo"], 0) + d["valor_total"]
+        resumo_obra[d["obra"]] = resumo_obra.get(d["obra"], 0) + d["valor_total"]
+
+    def formatar_dict(d, titulo):
+        d = dict(sorted(d.items(), key=lambda x: x[1], reverse=True))
+        linhas = [f"{k}: R$ {v:,.2f}" for k, v in list(d.items())[:8]]
+        return f"\n📋 **{titulo}**\n" + "\n".join(linhas)
+
+    return (
+        f"✅ Relatório interno de verificação ({params.get('startDate')} → {params.get('endDate')})\n"
+        f"{formatar_dict(resumo_fornecedor, 'Top Fornecedores')}\n"
+        f"{formatar_dict(resumo_centro, 'Top Centros de Custo')}\n"
+        f"{formatar_dict(resumo_obra, 'Top Obras')}\n"
+        f"📈 {rel['dre']['formatado']}"
+    )
