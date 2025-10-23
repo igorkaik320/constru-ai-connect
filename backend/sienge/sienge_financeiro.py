@@ -5,7 +5,7 @@ import json
 from base64 import b64encode
 from datetime import datetime, timedelta
 
-logging.warning("🚀 Rodando versão 5.1 do sienge_financeiro.py (debug de retorno das APIs Sienge)")
+logging.warning("🚀 Rodando versão 5.2 do sienge_financeiro.py (enriquecimento automático de nomes via links Sienge)")
 
 # ============================================================
 # 🔐 Configurações de autenticação
@@ -24,6 +24,26 @@ json_headers = {
 }
 
 # ============================================================
+# Cache simples para evitar requisições repetidas
+# ============================================================
+_cache = {}
+
+def get_cached(url):
+    if url in _cache:
+        return _cache[url]
+    try:
+        r = requests.get(url, headers=json_headers, timeout=20)
+        if r.status_code == 200:
+            data = r.json()
+            name = data.get("name") or data.get("description") or data.get("fantasyName") or "N/A"
+            _cache[url] = name
+            return name
+    except Exception as e:
+        logging.error(f"⚠️ Erro ao buscar {url}: {e}")
+    _cache[url] = "N/A"
+    return "N/A"
+
+# ============================================================
 # Datas padrão
 # ============================================================
 def periodo_padrao():
@@ -32,43 +52,38 @@ def periodo_padrao():
     return inicio.isoformat(), fim.isoformat()
 
 # ============================================================
-# Requisição base com retry e controle de limite
+# Função base de requisição (com retry e logs)
 # ============================================================
 def sienge_get(endpoint, params=None, max_retries=3):
-    """Faz requisições seguras à API do Sienge com tratamento de erros e throttling."""
     url = f"{BASE_URL}/{endpoint}"
     if params is None:
         params = {}
-
     if "startDate" not in params:
         inicio, fim = periodo_padrao()
         params["startDate"], params["endDate"] = inicio, fim
 
     for tentativa in range(1, max_retries + 1):
         try:
-            logging.info(f"➡️ GET {url} -> params={params}")
+            logging.info(f"➡️ GET {url} -> {params}")
             r = requests.get(url, headers=json_headers, params=params, timeout=40)
             logging.info(f"📦 Status: {r.status_code}")
-
-            # Esperar um pouco entre chamadas para evitar 429
             time.sleep(0.35)
 
             if r.status_code == 200:
                 data = r.json()
                 results = data.get("results") or data
                 logging.info(f"📊 {endpoint}: {len(results)} registros retornados.")
-                # Logar só os 2 primeiros itens para ver estrutura
                 if isinstance(results, list) and len(results) > 0:
                     logging.info(json.dumps(results[:2], indent=2, ensure_ascii=False))
                 return results
 
             elif r.status_code == 429:
                 espera = 3 * tentativa
-                logging.warning(f"⚠️ Limite de requisições atingido (429). Tentando novamente em {espera}s...")
+                logging.warning(f"⏳ 429 Too Many Requests – aguardando {espera}s...")
                 time.sleep(espera)
 
             elif r.status_code >= 500:
-                logging.warning(f"⚠️ Erro no servidor Sienge ({r.status_code}). Tentando novamente...")
+                logging.warning(f"⚠️ Erro {r.status_code} no servidor Sienge. Retentando...")
                 time.sleep(2 * tentativa)
 
             else:
@@ -94,7 +109,7 @@ def resumo_financeiro(params=None, **kwargs):
     lucro = total_receitas - total_despesas
 
     return (
-        f"📊 **Resumo Financeiro (Período {params.get('startDate')} a {params.get('endDate')})**\n\n"
+        f"📊 **Resumo Financeiro ({params.get('startDate')} → {params.get('endDate')})**\n\n"
         f"💵 Receitas: R$ {total_receitas:,.2f}\n"
         f"💸 Despesas: R$ {total_despesas:,.2f}\n"
         f"📈 Resultado: R$ {lucro:,.2f}"
@@ -110,7 +125,14 @@ def gastos_por_obra(params=None, **kwargs):
     obras = {}
 
     for item in dados:
-        obra = item.get("buildingCost", {}).get("name") or item.get("notes", "Obra não informada")
+        obra = "N/A"
+        for link in item.get("links", []):
+            if link["rel"] == "buildingsCost":
+                obra = get_cached(link["href"])
+                break
+        if obra == "N/A":
+            obra = item.get("notes", "Obra não informada")
+
         valor = float(item.get("totalInvoiceAmount") or item.get("totalValueAmount") or 0)
         obras[obra] = obras.get(obra, 0) + valor
 
@@ -127,7 +149,7 @@ def gastos_por_obra(params=None, **kwargs):
         percentual = (valor / total * 100) if total else 0
         linhas.append(f"🏗️ **{obra[:60]}** — R$ {valor:,.2f} ({percentual:.1f}%)")
 
-    return f"📊 **Top Obras por Gastos ({params.get('startDate')} a {params.get('endDate')})**\n\n" + "\n".join(linhas)
+    return f"📊 **Top Obras por Gastos ({params.get('startDate')} → {params.get('endDate')})**\n\n" + "\n".join(linhas)
 
 # ============================================================
 # 📂 Gastos por Centro de Custo
@@ -137,10 +159,15 @@ def gastos_por_centro_custo(params=None, **kwargs):
         params = kwargs or {}
     dados = sienge_get("bills", params)
     centros = {}
+
     for item in dados:
-        cc = item.get("departmentCost", {}).get("name") or "Centro não informado"
+        centro = "N/A"
+        for link in item.get("links", []):
+            if link["rel"] == "departmentsCost":
+                centro = get_cached(link["href"])
+                break
         valor = float(item.get("totalInvoiceAmount") or item.get("totalValueAmount") or 0)
-        centros[cc] = centros.get(cc, 0) + valor
+        centros[centro] = centros.get(centro, 0) + valor
 
     if not centros:
         return "📭 Nenhum dado encontrado."
@@ -155,6 +182,7 @@ def gastos_por_centro_custo(params=None, **kwargs):
 def gerar_relatorio_json(params=None, **kwargs):
     if not params:
         params = kwargs or {}
+
     contas_pagar = sienge_get("bills", params)
     contas_receber = sienge_get("accounts-receivable/receivable-bills", params)
 
@@ -170,20 +198,29 @@ def gerar_relatorio_json(params=None, **kwargs):
 
     todas_despesas = []
     for item in contas_pagar:
+        links = {l["rel"]: l["href"] for l in item.get("links", [])}
+        empresa = get_cached(links.get("company", "")) if "company" in links else "N/A"
+        fornecedor = get_cached(links.get("creditor", "")) if "creditor" in links else "N/A"
+        centro = get_cached(links.get("departmentsCost", "")) if "departmentsCost" in links else "N/A"
+        obra = get_cached(links.get("buildingsCost", "")) if "buildingsCost" in links else "N/A"
+
         todas_despesas.append({
-            "empresa": item.get("enterprise", {}).get("name") or "N/A",
-            "fornecedor": item.get("provider", {}).get("name") or "N/A",
-            "centro_custo": item.get("departmentCost", {}).get("name") or "N/A",
-            "conta_financeira": item.get("financialAccount", {}).get("name") or "N/A",
-            "obra": item.get("buildingCost", {}).get("name") or "N/A",
+            "empresa": empresa,
+            "fornecedor": fornecedor,
+            "centro_custo": centro,
+            "obra": obra,
             "status": item.get("status", "N/A"),
             "valor_total": float(item.get("totalInvoiceAmount") or item.get("totalValueAmount") or 0),
             "data_vencimento": item.get("dueDate", "N/A"),
-            "descricao": item.get("description", ""),
-            "documento": item.get("invoiceNumber", ""),
-            "tipo_lancamento": item.get("type", ""),
+            "descricao": item.get("notes", "")[:200],
+            "documento": item.get("documentNumber", ""),
+            "tipo_lancamento": item.get("originId", ""),
         })
 
     logging.info(f"🧾 Total despesas extraídas: {len(todas_despesas)}")
 
-    return {"todas_despesas": todas_despesas, "dre": {"formatado": dre_formatado}}
+    return {
+        "todas_despesas": todas_despesas,
+        "dre": {"formatado": dre_formatado},
+        "total_registros": len(todas_despesas)
+    }
