@@ -21,7 +21,7 @@ from sienge.sienge_financeiro import (
     gerar_relatorio_json,
 )
 from sienge.sienge_ia import gerar_analise_financeira
-from dashboard_financeiro import gerar_apresentacao_ppt
+from dashboard_financeiro import gerar_apresentacao_gamma
 
 # ============================================================
 # 🚀 CONFIGURAÇÃO DO SERVIDOR FASTAPI
@@ -161,7 +161,7 @@ async def mensagem(msg: Message):
         {"label": "💳 Segunda Via de Boletos", "action": "buscar_boletos_cpf"},
         {"label": "📊 Resumo Financeiro", "action": "resumo_financeiro"},
         {"label": "🏗️ Gastos por Obra", "action": "gastos_por_obra"},
-        {"label": "🎬 Gerar Apresentação", "action": "apresentacao_gamma"},
+        {"label": "🎬 Gerar Relatório Gamma", "action": "apresentacao_gamma"},
     ]
 
     if not texto or acao == "saudacao":
@@ -228,7 +228,7 @@ async def mensagem(msg: Message):
                     "filename": f"pedido_{pid}.pdf"}
 
         # ========================================================
-        # 💰 FINANCEIRO / IA / GRÁFICOS
+        # 💰 FINANCEIRO / IA / RELATÓRIO GAMMA
         # ========================================================
         if acao == "resumo_financeiro":
             return {"text": resumo_financeiro(**filtros), "buttons": menu_inicial}
@@ -248,28 +248,21 @@ async def mensagem(msg: Message):
             return {"text": texto_ia, "buttons": menu_inicial}
 
         if acao == "apresentacao_gamma":
-            logging.info("🎬 Iniciando geração de apresentação Gamma (PPT)...")
+            logging.info("🎬 Iniciando geração de relatório Gamma (HTML)...")
             rel = gerar_relatorio_json(**filtros)
             df = pd.DataFrame(rel.get("todas_despesas", []))
             dre = rel.get("dre", {}).get("formatado", {})
             if df.empty:
-                return {"text": "⚠️ Sem dados para gerar apresentação."}
+                return {"text": "⚠️ Sem dados para gerar relatório."}
 
-            ppt_bytes = gerar_apresentacao_ppt(df, dre)
-            if not ppt_bytes:
-                return {"text": "⚠️ Erro ao gerar apresentação PPT."}
+            html = gerar_apresentacao_gamma(df, dre)
+            caminho_html = f"static/relatorio_gamma_{msg.user}.html"
+            with open(caminho_html, "w", encoding="utf-8") as f:
+                f.write(html)
 
-            arquivo = f"static/relatorio_financeiro_{msg.user}.pptx"
-            with open(arquivo, "wb") as f:
-                f.write(ppt_bytes)
-
-            link = f"https://constru-ai-connect.onrender.com/{arquivo}"
-            logging.info(f"✅ PPT gerado com sucesso: {link}")
-
-            return {
-                "text": f"📊 Apresentação gerada com sucesso!\n\n[Baixar Apresentação]({link})",
-                "buttons": menu_inicial
-            }
+            link = f"https://constru-ai-connect.onrender.com/{caminho_html}"
+            logging.info(f"✅ Relatório Gamma gerado com sucesso: {link}")
+            return {"text": f"🎬 Relatório interativo gerado!\n\n[📊 Abrir no Navegador]({link})", "buttons": menu_inicial}
 
         # ========================================================
         # DEFAULT
@@ -285,7 +278,6 @@ async def mensagem(msg: Message):
 # ============================================================
 @app.get("/teste-financeiro")
 def teste_financeiro():
-    """Gera relatório consolidado para teste (sem IA)"""
     filtros = {"startDate": "2024-01-01", "endDate": "2024-12-31", "enterpriseId": "1"}
     rel = gerar_relatorio_json(**filtros)
     return {"resumo": rel.get("dre", {}).get("formatado", {}), "amostra": rel.get("todas_despesas", [])[:5]}
