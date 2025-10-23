@@ -35,15 +35,12 @@ class Message(BaseModel):
 def money(v):
     try:
         return f"R$ {float(v):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-    except:  # noqa
+    except:
         return "R$ 0,00"
 
-# contexto por usuário (cpf e filtros financeiros)
 usuarios_contexto = {}
 
-# ---------- helpers de parsing ----------
 def extrair_periodo(texto: str):
-    # captura duas datas YYYY-MM-DD
     datas = re.findall(r"\d{4}-\d{2}-\d{2}", texto)
     if len(datas) >= 2:
         return {"startDate": datas[0], "endDate": datas[1]}
@@ -67,15 +64,12 @@ def atualizar_filtros(user: str, novos: dict):
     ctx["filtros"] = atuais
     return atuais
 
-# ---------- intent ----------
 def entender_intencao(texto: str):
     t = (texto or "").strip().lower()
 
-    # saudações
     if t in ["oi", "ola", "olá", "bom dia", "boa tarde", "boa noite"]:
         return {"acao": "saudacao"}
 
-    # pedidos
     if "pedido" in t and "pendente" in t:
         return {"acao": "listar_pedidos_pendentes"}
     if re.search(r"itens\s+do\s+pedido\s+\d+", t):
@@ -91,18 +85,15 @@ def entender_intencao(texto: str):
         nums = re.findall(r"\d+", t)
         return {"acao": "relatorio_pdf", "parametros": {"pedido_id": int(nums[-1])}} if nums else {}
 
-    # boletos
     if "segunda via" in t or "boleto" in t:
         nums = re.findall(r"\d+", t)
         if len(nums) >= 2:
             return {"acao": "link_boleto", "parametros": {"titulo_id": int(nums[-2]), "parcela_id": int(nums[-1])}}
         return {"acao": "buscar_boletos_cpf"}
 
-    # cpf
     if re.search(r"\d{11}|\d{3}\.\d{3}\.\d{3}-\d{2}", t):
         return {"acao": "cpf_digitado", "parametros": {"cpf": t}}
 
-    # financeiro
     if "resumo" in t or "dre" in t or "resultado" in t:
         return {"acao": "resumo_financeiro"}
     if "gasto" in t and "obra" in t:
@@ -112,19 +103,16 @@ def entender_intencao(texto: str):
     if "análise" in t or "analise" in t:
         return {"acao": "analise_financeira"}
 
-    # filtros
     if "empresa" in t or re.search(r"\d{4}-\d{2}-\d{2}", t):
         return {"acao": "definir_filtros"}
 
     return {"acao": None}
 
-# ---------- endpoint ----------
 @app.post("/mensagem")
 async def mensagem(msg: Message):
     logging.info(f"📩 Mensagem recebida: {msg.user} -> {msg.text}")
     texto = (msg.text or "").strip()
 
-    # atualiza filtros se o usuário mandar datas/empresa
     if "empresa" in texto.lower() or re.search(r"\d{4}-\d{2}-\d{2}", texto):
         novos = {}
         novos.update(extrair_periodo(texto))
@@ -132,10 +120,10 @@ async def mensagem(msg: Message):
         if novos:
             atualizados = atualizar_filtros(msg.user, novos)
             return {
-                "text": "🧭 Filtros definidos.\n" +
-                        (f"• Início: {atualizados.get('startDate')}\n" if atualizados.get("startDate") else "") +
-                        (f"• Fim: {atualizados.get('endDate')}\n" if atualizados.get("endDate") else "") +
-                        (f"• Empresa: {atualizados.get('enterpriseId')}\n" if atualizados.get("enterpriseId") else ""),
+                "text": "🧭 Filtros definidos.\n"
+                        + (f"• Início: {atualizados.get('startDate')}\n" if atualizados.get("startDate") else "")
+                        + (f"• Fim: {atualizados.get('endDate')}\n" if atualizados.get("endDate") else "")
+                        + (f"• Empresa: {atualizados.get('enterpriseId')}\n" if atualizados.get("enterpriseId") else ""),
                 "buttons": [
                     {"label": "📊 Resumo Financeiro", "action": "resumo_financeiro"},
                     {"label": "🏗️ Gastos por Obra", "action": "gastos_por_obra"},
@@ -164,7 +152,6 @@ async def mensagem(msg: Message):
         }
 
     try:
-        # ===== CONFIRMA CPF =====
         if msg.user in usuarios_contexto and usuarios_contexto[msg.user].get("aguardando_confirmacao"):
             if texto.lower() in ["sim", "confirmar", "ok", "✅ confirmar"]:
                 cpf = usuarios_contexto[msg.user]["cpf"]
@@ -175,14 +162,12 @@ async def mensagem(msg: Message):
                 if not boletos:
                     return {"text": f"📭 Nenhum boleto em aberto encontrado para {nome}."}
                 linhas = [f"💳 **Título {b['titulo_id']}** — {money(b['valor'])} — Venc.: {b['vencimento']}" for b in boletos]
-                botoes = [{"label": f"2ª via {b['titulo_id']}/{b['parcela_id']}",
-                           "action": f"segunda via {b['titulo_id']}/{b['parcela_id']}"} for b in boletos]
+                botoes = [{"label": f"2ª via {b['titulo_id']}/{b['parcela_id']}", "action": f"segunda via {b['titulo_id']}/{b['parcela_id']}"} for b in boletos]
                 return {"text": f"📋 Boletos de *{nome}:*\n\n" + "\n".join(linhas), "buttons": botoes}
             else:
                 del usuarios_contexto[msg.user]
                 return {"text": "⚠️ Tudo bem, digite o CPF novamente.", "buttons": menu_inicial}
 
-        # ===== CPF DIGITADO =====
         if acao == "cpf_digitado":
             cpf = re.sub(r"\D", "", parametros.get("cpf", ""))
             if len(cpf) != 11:
@@ -194,14 +179,12 @@ async def mensagem(msg: Message):
                     "buttons": [{"label": "✅ Confirmar", "action": "confirmar"},
                                 {"label": "❌ Corrigir CPF", "action": "buscar_boletos_cpf"}]}
 
-        # ===== BOLETOS =====
         if acao == "buscar_boletos_cpf":
             return {"text": "💳 Digite o CPF do titular dos boletos.", "buttons": menu_inicial}
         if acao == "link_boleto":
             t, p = parametros.get("titulo_id"), parametros.get("parcela_id")
             return {"text": gerar_link_boleto(t, p), "buttons": menu_inicial}
 
-        # ===== PEDIDOS =====
         if acao == "listar_pedidos_pendentes":
             pedidos = listar_pedidos_pendentes()
             if not pedidos:
@@ -213,13 +196,7 @@ async def mensagem(msg: Message):
         if acao == "itens_pedido":
             pid = parametros.get("pedido_id")
             itens = itens_pedido(pid)
-            linhas = []
-            for i in itens:
-                desc = (
-                    i.get("description") or i.get("itemDescription") or i.get("productDescription")
-                    or i.get("materialDescription") or i.get("name") or "Item sem descrição"
-                )
-                linhas.append(f"• {desc} — {money(i.get('totalAmount', 0))}")
+            linhas = [f"• {i.get('description', 'Item')} — {money(i.get('totalAmount', 0))}" for i in itens]
             return {"text": f"📦 Itens do pedido {pid}:\n" + "\n".join(linhas),
                     "buttons": [{"label": "✅ Autorizar", "action": f"autorizar pedido {pid}"},
                                 {"label": "❌ Reprovar", "action": f"reprovar pedido {pid}"},
@@ -238,14 +215,12 @@ async def mensagem(msg: Message):
                     "pdf_base64": base64.b64encode(pdf).decode(),
                     "filename": f"pedido_{pid}.pdf"}
 
-        # ===== FINANCEIRO ===== (respeita filtros do usuário)
         if acao == "resumo_financeiro":
             return {"text": resumo_financeiro(**filtros), "buttons": menu_inicial}
         if acao == "gastos_por_obra":
             return {"text": gastos_por_obra(**filtros), "buttons": menu_inicial}
         if acao == "gastos_por_centro_custo":
             return {"text": gastos_por_centro_custo(**filtros), "buttons": menu_inicial}
-
         if acao == "analise_financeira":
             rel = gerar_relatorio_json(**filtros)
             df = pd.DataFrame(rel.get("todas_despesas", []))
