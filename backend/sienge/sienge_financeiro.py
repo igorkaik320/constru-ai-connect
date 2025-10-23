@@ -1,14 +1,13 @@
-# sienge/sienge_financeiro.py
 import requests
 import logging
-import pandas as pd
-from datetime import datetime, timedelta
+import time
 from base64 import b64encode
+from datetime import datetime, timedelta
 
-logging.warning("🚀 Rodando versão 5.1 do sienge_financeiro.py (autenticação + extração completa de pagar/receber + rateios/obras/impostos)")
+logging.warning("🚀 Rodando versão 5.0 do sienge_financeiro.py (retry + sleep + dados completos)")
 
 # ============================================================
-# 🔐 AUTENTICAÇÃO (Basic) E CONFIGURAÇÃO BASE
+# 🔐 Configurações de autenticação
 # ============================================================
 subdominio = "cctcontrol"
 usuario = "cctcontrol-api"
@@ -17,14 +16,14 @@ senha = "9SQ2MaNrFOeZOOuOAqeSRy7bYWYDDf85"
 BASE_URL = f"https://api.sienge.com.br/{subdominio}/public/api/v1"
 _token = b64encode(f"{usuario}:{senha}".encode()).decode()
 
-HEADERS = {
+json_headers = {
     "Authorization": f"Basic {_token}",
     "accept": "application/json",
     "Content-Type": "application/json",
 }
 
 # ============================================================
-# 🗓️ Datas padrão (últimos 12 meses)
+# Datas padrão
 # ============================================================
 def periodo_padrao():
     fim = datetime.now().date()
@@ -32,158 +31,60 @@ def periodo_padrao():
     return inicio.isoformat(), fim.isoformat()
 
 # ============================================================
-# 🔄 Função GET segura
+# Requisição base com retry e controle de limite
 # ============================================================
-def _safe_get(url, params=None):
-    try:
-        r = requests.get(url, headers=HEADERS, params=params, timeout=30)
-        if r.status_code == 200:
-            data = r.json()
-            return data.get("results") if isinstance(data, dict) else data
-        logging.warning(f"⚠️ GET {url} -> {r.status_code}: {r.text[:200]}")
-        return []
-    except Exception as e:
-        logging.exception(f"❌ Erro GET {url}: {e}")
-        return []
+def sienge_get(endpoint, params=None, max_retries=3):
+    """Faz requisições seguras à API do Sienge com tratamento de erros e throttling."""
+    url = f"{BASE_URL}/{endpoint}"
+    if params is None:
+        params = {}
 
-# ============================================================
-# 🔍 Listagem completa (pagar + receber) com detalhes
-# ============================================================
-def listar_titulos_completos(startDate=None, endDate=None, enterpriseId=None, incluir_receber=True):
-    """Busca títulos a pagar e a receber + parcelas + rateios + obras + impostos."""
-    if not startDate or not endDate:
-        startDate, endDate = periodo_padrao()
+    if "startDate" not in params:
+        inicio, fim = periodo_padrao()
+        params["startDate"], params["endDate"] = inicio, fim
 
-    params = {"startDate": startDate, "endDate": endDate, "limit": 200}
-    if enterpriseId:
-        # No /bills, a empresa é o debtorId (empresa devida no Sienge)
-        params["debtorId"] = enterpriseId
-
-    linhas = []
-
-    # --------------------------
-    # 💸 Contas a Pagar (/bills)
-    # --------------------------
-    bills_url = f"{BASE_URL}/bills"
-    pagar = _safe_get(bills_url, params=params)
-    logging.info(f"📄 Títulos a pagar: {len(pagar)}")
-
-    for b in pagar:
+    for tentativa in range(1, max_retries + 1):
         try:
-            bill_id = b.get("id")
-            empresa = b.get("debtorId")
-            fornecedor = b.get("creditorId")
-            doc_num = b.get("documentNumber")
-            doc_tipo = b.get("documentIdentificationId")
-            emissao = b.get("issueDate")
-            origem = b.get("originId")
-            status = b.get("status")
-            notas = b.get("notes", "")
+            logging.info(f"➡️ GET {url} -> params={params}")
+            r = requests.get(url, headers=json_headers, params=params, timeout=40)
+            logging.info(f"📦 Status: {r.status_code}")
 
-            # Valor total do título (nota): totalInvoiceAmount
-            valor_nota = float(b.get("totalInvoiceAmount") or 0.0)
+            # Esperar um pouco entre chamadas para evitar 429
+            time.sleep(0.35)
 
-            # Parcelas
-            parcelas = _safe_get(f"{bills_url}/{bill_id}/installments")
-            soma_parcelas = sum(float(p.get("amount", 0) or 0) for p in parcelas)
-            vencs = ", ".join([p.get("dueDate") for p in parcelas if p.get("dueDate")]) or None
-            sits = ", ".join([p.get("situation") for p in parcelas if p.get("situation")]) or None
+            if r.status_code == 200:
+                data = r.json()
+                return data.get("results") or data
 
-            # Rateios Financeiros (centro de custo / plano)
-            aprop = _safe_get(f"{bills_url}/{bill_id}/budget-categories")
-            centros = [str(a.get("costCenterId")) for a in aprop if a.get("costCenterId") is not None]
-            planos = [a.get("paymentCategoriesId") for a in aprop if a.get("paymentCategoriesId")]
+            elif r.status_code == 429:
+                espera = 3 * tentativa
+                logging.warning(f"⚠️ Limite de requisições atingido (429). Tentando novamente em {espera}s...")
+                time.sleep(espera)
 
-            # Obras
-            obras = _safe_get(f"{bills_url}/{bill_id}/buildings-cost")
-            nomes_obras = [o.get("buildingName") for o in obras if o.get("buildingName")]
+            elif r.status_code >= 500:
+                logging.warning(f"⚠️ Erro no servidor Sienge ({r.status_code}). Tentando novamente...")
+                time.sleep(2 * tentativa)
 
-            # Departamentos
-            deps = _safe_get(f"{bills_url}/{bill_id}/departments-cost")
-            nomes_deps = [d.get("departmentName") for d in deps if d.get("departmentName")]
+            else:
+                logging.error(f"❌ Erro {r.status_code}: {r.text[:400]}")
+                break
 
-            # Impostos
-            impostos = _safe_get(f"{bills_url}/{bill_id}/taxes")
-            total_impostos = sum(float(t.get("amount", 0) or 0) for t in impostos)
-
-            linhas.append({
-                "tipo": "Pagar",
-                "id": bill_id,
-                "empresa": empresa,
-                "fornecedor": fornecedor,
-                "documento": doc_num,
-                "tipo_doc": doc_tipo,
-                "emissao": emissao,
-                "vencimentos": vencs,
-                "situacoes": sits,
-                "valor_total": soma_parcelas if soma_parcelas > 0 else valor_nota,
-                "impostos": total_impostos,
-                "origem": origem,
-                "status": status,
-                "obra": ", ".join(nomes_obras) if nomes_obras else None,
-                "centro_custo": ", ".join(centros) if centros else None,
-                "plano_financeiro": ", ".join(planos) if planos else None,
-                "departamento": ", ".join(nomes_deps) if nomes_deps else None,
-                "notas": notas,
-            })
         except Exception as e:
-            logging.warning(f"⚠️ Falha ao processar título pagar {b.get('id')}: {e}")
-
-    # --------------------------
-    # 💰 Contas a Receber
-    # --------------------------
-    if incluir_receber:
-        rec_url = f"{BASE_URL}/accounts-receivable/receivable-bills"
-        rec = _safe_get(rec_url, params=params)
-        logging.info(f"📄 Títulos a receber: {len(rec)}")
-
-        for r in rec:
-            try:
-                # campos observados no seu ambiente: receivableBillValue, issueDate, documentNumber etc.
-                valor = float(r.get("receivableBillValue") or r.get("totalInvoiceAmount") or 0.0)
-                linhas.append({
-                    "tipo": "Receber",
-                    "id": r.get("receivableBillId") or r.get("id"),
-                    "empresa": r.get("companyId") or r.get("debtorId"),
-                    "fornecedor": r.get("customerId"),   # aqui é cliente (quem vai pagar)
-                    "documento": r.get("documentNumber"),
-                    "tipo_doc": r.get("documentId") or r.get("documentIdentificationId"),
-                    "emissao": r.get("issueDate"),
-                    "valor_total": valor,
-                    "origem": r.get("originId"),
-                    "status": r.get("status"),
-                    "notas": r.get("note", ""),
-                    "obra": None,
-                    "centro_custo": None,
-                    "plano_financeiro": None,
-                    "departamento": None,
-                    "impostos": None,
-                    "vencimentos": None,
-                    "situacoes": None,
-                })
-            except Exception as e:
-                logging.warning(f"⚠️ Falha ao processar título receber {r.get('id')}: {e}")
-
-    return pd.DataFrame(linhas)
+            logging.exception(f"❌ Erro em {endpoint}: {e}")
+            time.sleep(2)
+    return []
 
 # ============================================================
-# 💰 Resumo Financeiro (string para chat)
+# 💰 Resumo Financeiro
 # ============================================================
 def resumo_financeiro(params=None, **kwargs):
     if not params:
         params = kwargs or {}
-    df = listar_titulos_completos(
-        startDate=params.get("startDate"),
-        endDate=params.get("endDate"),
-        enterpriseId=params.get("enterpriseId"),
-        incluir_receber=True,
-    )
-    if df.empty:
-        inicio, fim = params.get("startDate"), params.get("endDate")
-        return f"📊 **Resumo Financeiro (Período {inicio} a {fim})**\n\nNenhum dado encontrado."
+    contas_pagar = sienge_get("bills", params)
+    contas_receber = sienge_get("accounts-receivable/receivable-bills", params)
 
-    total_receitas = df.loc[df["tipo"] == "Receber", "valor_total"].sum()
-    total_despesas = df.loc[df["tipo"] == "Pagar", "valor_total"].sum()
+    total_receitas = sum(float(c.get("receivableBillValue") or 0) for c in contas_receber)
+    total_despesas = sum(float(c.get("totalInvoiceAmount") or c.get("totalValueAmount") or 0) for c in contas_pagar)
     lucro = total_receitas - total_despesas
 
     return (
@@ -194,83 +95,65 @@ def resumo_financeiro(params=None, **kwargs):
     )
 
 # ============================================================
-# 🏗️ Gastos por Obra (string para chat)
+# 🏗️ Gastos por Obra
 # ============================================================
 def gastos_por_obra(params=None, **kwargs):
     if not params:
         params = kwargs or {}
-    df = listar_titulos_completos(
-        startDate=params.get("startDate"),
-        endDate=params.get("endDate"),
-        enterpriseId=params.get("enterpriseId"),
-        incluir_receber=False,
-    )
-    df = df[df["tipo"] == "Pagar"]
-    if df.empty:
+    dados = sienge_get("bills", params)
+    obras = {}
+
+    for item in dados:
+        obra = item.get("buildingCost", {}).get("name") or item.get("notes", "Obra não informada")
+        valor = float(item.get("totalInvoiceAmount") or item.get("totalValueAmount") or 0)
+        obras[obra] = obras.get(obra, 0) + valor
+
+    if not obras:
         return "📭 Nenhum gasto encontrado."
 
-    # Normaliza None
-    df["obra"] = df["obra"].fillna("N/A")
-    agrupado = df.groupby("obra")["valor_total"].sum().sort_values(ascending=False)
-    total = float(agrupado.sum()) or 1.0
-
-    linhas = [f"📊 **Top Obras por Gastos ({params.get('startDate')} a {params.get('endDate')})**\n"]
-    for i, (obra, valor) in enumerate(agrupado.items()):
+    obras = dict(sorted(obras.items(), key=lambda x: x[1], reverse=True))
+    total = sum(obras.values())
+    linhas = []
+    for i, (obra, valor) in enumerate(obras.items()):
         if i >= 10:
-            linhas.append(f"...(+{len(agrupado) - 10} outras obras)")
+            linhas.append(f"...(+{len(obras)-10} outras obras)")
             break
-        perc = (valor / total) * 100
-        nome = (obra or "N/A")
-        linhas.append(f"🏗️ **{nome[:60]}** — R$ {valor:,.2f} ({perc:.1f}%)")
+        percentual = (valor / total * 100) if total else 0
+        linhas.append(f"🏗️ **{obra[:60]}** — R$ {valor:,.2f} ({percentual:.1f}%)")
 
-    return "\n".join(linhas)
+    return f"📊 **Top Obras por Gastos ({params.get('startDate')} a {params.get('endDate')})**\n\n" + "\n".join(linhas)
 
 # ============================================================
-# 📂 Gastos por Centro de Custo (string para chat)
+# 📂 Gastos por Centro de Custo
 # ============================================================
 def gastos_por_centro_custo(params=None, **kwargs):
     if not params:
         params = kwargs or {}
-    df = listar_titulos_completos(
-        startDate=params.get("startDate"),
-        endDate=params.get("endDate"),
-        enterpriseId=params.get("enterpriseId"),
-        incluir_receber=False,
-    )
-    df = df[df["tipo"] == "Pagar"]
-    if df.empty:
+    dados = sienge_get("bills", params)
+    centros = {}
+    for item in dados:
+        cc = item.get("departmentCost", {}).get("name") or "Centro não informado"
+        valor = float(item.get("totalInvoiceAmount") or item.get("totalValueAmount") or 0)
+        centros[cc] = centros.get(cc, 0) + valor
+
+    if not centros:
         return "📭 Nenhum dado encontrado."
 
-    df["centro_custo"] = df["centro_custo"].fillna("N/A")
-    agrupado = df.groupby("centro_custo")["valor_total"].sum().sort_values(ascending=False)
-
-    linhas = ["📂 **Top Centros de Custo**\n"]
-    for i, (cc, valor) in enumerate(agrupado.items()):
-        if i >= 10:
-            linhas.append(f"...(+{len(agrupado) - 10} outros)")
-            break
-        linhas.append(f"🏢 {cc} — R$ {valor:,.2f}")
-    return "\n".join(linhas)
+    centros = dict(sorted(centros.items(), key=lambda x: x[1], reverse=True))
+    linhas = [f"📂 {cc}: R$ {valor:,.2f}" for cc, valor in list(centros.items())[:10]]
+    return "📊 **Top Centros de Custo**\n\n" + "\n".join(linhas)
 
 # ============================================================
-# 🧮 Relatório JSON (para dashboard/IA)
+# 🧮 Relatório JSON (para IA e dashboards)
 # ============================================================
 def gerar_relatorio_json(params=None, **kwargs):
     if not params:
         params = kwargs or {}
+    contas_pagar = sienge_get("bills", params)
+    contas_receber = sienge_get("accounts-receivable/receivable-bills", params)
 
-    df = listar_titulos_completos(
-        startDate=params.get("startDate"),
-        endDate=params.get("endDate"),
-        enterpriseId=params.get("enterpriseId"),
-        incluir_receber=True,
-    )
-
-    if df.empty:
-        return {"todas_despesas": [], "dre": {"formatado": {"receitas": "R$ 0,00", "despesas": "R$ 0,00", "lucro": "R$ 0,00"}}}
-
-    total_receitas = df.loc[df["tipo"] == "Receber", "valor_total"].sum()
-    total_despesas = df.loc[df["tipo"] == "Pagar", "valor_total"].sum()
+    total_receitas = sum(float(c.get("receivableBillValue") or 0) for c in contas_receber)
+    total_despesas = sum(float(c.get("totalInvoiceAmount") or c.get("totalValueAmount") or 0) for c in contas_pagar)
     lucro = total_receitas - total_despesas
 
     dre_formatado = {
@@ -279,17 +162,20 @@ def gerar_relatorio_json(params=None, **kwargs):
         "lucro": f"R$ {lucro:,.2f}",
     }
 
-    # Para o dashboard antigo, mantemos nomes esperados nas colunas principais:
-    df_export = df.rename(columns={
-        "obra": "obra",
-        "centro_custo": "centro_custo",
-        "fornecedor": "fornecedor",
-        "empresa": "empresa",
-        "status": "status",
-        "valor_total": "valor_total",
-    })
+    todas_despesas = []
+    for item in contas_pagar:
+        todas_despesas.append({
+            "empresa": item.get("enterprise", {}).get("name") or "N/A",
+            "fornecedor": item.get("provider", {}).get("name") or "N/A",
+            "centro_custo": item.get("departmentCost", {}).get("name") or "N/A",
+            "conta_financeira": item.get("financialAccount", {}).get("name") or "N/A",
+            "obra": item.get("buildingCost", {}).get("name") or "N/A",
+            "status": item.get("status", "N/A"),
+            "valor_total": float(item.get("totalInvoiceAmount") or item.get("totalValueAmount") or 0),
+            "data_vencimento": item.get("dueDate", "N/A"),
+            "descricao": item.get("description", ""),
+            "documento": item.get("invoiceNumber", ""),
+            "tipo_lancamento": item.get("type", ""),
+        })
 
-    return {
-        "todas_despesas": df_export.to_dict(orient="records"),
-        "dre": {"formatado": dre_formatado},
-    }
+    return {"todas_despesas": todas_despesas, "dre": {"formatado": dre_formatado}}
