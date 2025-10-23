@@ -1,73 +1,73 @@
-import streamlit as st
+import io
 import pandas as pd
-import plotly.express as px
-from sienge.sienge_financeiro import gerar_relatorio_json
-from sienge.sienge_ia import gerar_analise_financeira
+from pptx import Presentation
+from pptx.util import Inches, Pt
+from pptx.chart.data import CategoryChartData
+from pptx.enum.chart import XL_CHART_TYPE
 
-st.set_page_config(page_title="Constru.IA Financeiro", page_icon="💼", layout="wide")
+def gerar_apresentacao_ppt(df: pd.DataFrame, dre: dict) -> bytes:
+    """Gera um arquivo PowerPoint com gráficos e KPIs financeiros."""
+    try:
+        prs = Presentation()
+        slide_title = prs.slide_layouts[0]
+        slide_content = prs.slide_layouts[5]
 
-st.title("💼 Dashboard Financeiro Inteligente — Constru.IA")
-st.caption("📊 Dados via API Sienge • 💡 IA integrada para análises e apresentações automáticas")
+        # --- Slide 1: Título ---
+        slide = prs.slides.add_slide(slide_title)
+        slide.shapes.title.text = "Relatório Financeiro — Constru.IA"
+        slide.placeholders[1].text = "Resumo Automático via API Sienge + IA"
 
-col1, col2, col3 = st.columns(3)
-inicio = col1.date_input("Início", pd.Timestamp.today() - pd.Timedelta(days=365))
-fim = col2.date_input("Fim", pd.Timestamp.today())
-enterprise_id = col3.text_input("Enterprise ID (opcional)", "")
+        # --- Slide 2: Indicadores Financeiros ---
+        slide = prs.slides.add_slide(slide_content)
+        slide.shapes.title.text = "📊 Indicadores Gerais"
+        tf = slide.shapes.add_textbox(Inches(1), Inches(1.5), Inches(8), Inches(3)).text_frame
+        tf.text = f"💵 Receitas: {dre.get('receitas', 'R$ 0,00')}\n💸 Despesas: {dre.get('despesas', 'R$ 0,00')}\n📈 Lucro: {dre.get('lucro', 'R$ 0,00')}"
 
-params = {"startDate": str(inicio), "endDate": str(fim)}
-if enterprise_id.strip():
-    params["enterpriseId"] = enterprise_id.strip()
+        # --- Slide 3: Gráfico de Gastos por Categoria ---
+        if "centro_custo" in df.columns:
+            data = df.groupby("centro_custo")["valor_total"].sum().reset_index().sort_values("valor_total", ascending=False).head(8)
+            chart_data = CategoryChartData()
+            chart_data.categories = data["centro_custo"]
+            chart_data.add_series("Gastos", data["valor_total"])
 
-with st.spinner("🔄 Buscando dados financeiros..."):
-    relatorio = gerar_relatorio_json(**params)
+            slide = prs.slides.add_slide(slide_content)
+            slide.shapes.title.text = "🏗️ Gastos por Centro de Custo"
+            x, y, cx, cy = Inches(1), Inches(1.5), Inches(8), Inches(4.5)
+            graphic_frame = slide.shapes.add_chart(XL_CHART_TYPE.COLUMN_CLUSTERED, x, y, cx, cy, chart_data).chart
+            graphic_frame.has_legend = True
 
-df = pd.DataFrame(relatorio.get("todas_despesas", []))
-dre = relatorio.get("dre", {}).get("formatado", {})
+        # --- Slide 4: Tabela Resumo ---
+        slide = prs.slides.add_slide(slide_content)
+        slide.shapes.title.text = "📋 Amostra de Dados"
+        top = Inches(1.5)
+        left = Inches(0.8)
+        width = Inches(8.5)
+        height = Inches(0.8)
+        table_data = df.head(8)
+        rows, cols = table_data.shape
+        table = slide.shapes.add_table(rows+1, cols, left, top, width, height).table
+        for j, col in enumerate(table_data.columns):
+            table.cell(0, j).text = col
+        for i, row in table_data.iterrows():
+            for j, value in enumerate(row):
+                table.cell(i+1, j).text = str(value)[:25]
 
-if df.empty:
-    st.warning("⚠️ Nenhuma despesa encontrada para o período/empresa selecionado.")
-    st.stop()
+        # --- Slide 5: Conclusão ---
+        slide = prs.slides.add_slide(slide_content)
+        slide.shapes.title.text = "💡 Conclusões e Recomendações"
+        slide.placeholders[0].text = (
+            "• Otimizar gastos nas obras de maior peso.\n"
+            "• Reavaliar fornecedores com concentração de custos.\n"
+            "• Priorizar obras com maior retorno e menor inadimplência.\n"
+            "• Reduzir despesas administrativas recorrentes."
+        )
 
-c1, c2, c3 = st.columns(3)
-c1.metric("💵 Receitas", dre.get("receitas", "R$ 0,00"))
-c2.metric("💸 Despesas", dre.get("despesas", "R$ 0,00"))
-c3.metric("📈 Lucro", dre.get("lucro", "R$ 0,00"))
+        # Exporta o arquivo em bytes
+        buffer = io.BytesIO()
+        prs.save(buffer)
+        buffer.seek(0)
+        return buffer.getvalue()
 
-st.divider()
-st.subheader("📊 Distribuição de Gastos")
-
-aba = st.radio(
-    "Visualizar por:",
-    ["empresa", "fornecedor", "centro_custo", "conta_financeira", "obra", "status"],
-    horizontal=True
-)
-
-if aba not in df.columns:
-    st.error(f"⚠️ A coluna '{aba}' não foi encontrada nos dados.")
-else:
-    df_plot = df.groupby(aba)["valor_total"].sum().reset_index()
-    fig = px.bar(
-        df_plot,
-        x=aba,
-        y="valor_total",
-        text_auto=".2s",
-        title=f"Gastos por {aba.capitalize()}",
-        color="valor_total",
-        color_continuous_scale="Blues"
-    )
-    st.plotly_chart(fig, use_container_width=True)
-
-st.divider()
-st.subheader("📋 Dados Detalhados")
-st.dataframe(df, use_container_width=True)
-
-st.divider()
-st.subheader("🎬 Geração Automática de Apresentação (Estilo Gamma)")
-
-if st.button("🧠 Gerar Apresentação Interativa (IA + Gráficos)"):
-    with st.spinner("Gerando slides e narrativa..."):
-        analise = gerar_analise_financeira("Apresentação Financeira", df)
-        st.markdown(analise)
-
-st.divider()
-st.caption("🚀 Constru.IA — Relatórios Inteligentes via API Sienge + OpenAI")
+    except Exception as e:
+        print("Erro ao gerar PPT:", e)
+        return None
