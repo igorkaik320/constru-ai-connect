@@ -19,8 +19,11 @@ from sienge.sienge_financeiro import (
     gastos_por_centro_custo,
     gerar_relatorio_json,
 )
-from sienge.sienge_ia import gerar_analise_financeira
+from sienge.sienge_ia import gerar_analise_financeira, gerar_apresentacao_financeira
 
+# ============================================================
+# 🚀 Configuração inicial do servidor FastAPI
+# ============================================================
 logging.basicConfig(level=logging.INFO)
 app = FastAPI()
 app.add_middleware(
@@ -32,6 +35,9 @@ class Message(BaseModel):
     user: str
     text: str
 
+# ============================================================
+# 🧮 Funções utilitárias e contexto
+# ============================================================
 def money(v):
     try:
         return f"R$ {float(v):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
@@ -64,6 +70,9 @@ def atualizar_filtros(user: str, novos: dict):
     ctx["filtros"] = atuais
     return atuais
 
+# ============================================================
+# 🧠 Interpretação de intenção
+# ============================================================
 def entender_intencao(texto: str):
     t = (texto or "").strip().lower()
 
@@ -102,17 +111,23 @@ def entender_intencao(texto: str):
         return {"acao": "gastos_por_centro_custo"}
     if "análise" in t or "analise" in t:
         return {"acao": "analise_financeira"}
+    if "apresentacao" in t or "slides" in t or "gamma" in t:
+        return {"acao": "apresentacao_gamma"}
 
     if "empresa" in t or re.search(r"\d{4}-\d{2}-\d{2}", t):
         return {"acao": "definir_filtros"}
 
     return {"acao": None}
 
+# ============================================================
+# 💬 Endpoint principal de mensagens
+# ============================================================
 @app.post("/mensagem")
 async def mensagem(msg: Message):
     logging.info(f"📩 Mensagem recebida: {msg.user} -> {msg.text}")
     texto = (msg.text or "").strip()
 
+    # Atualizar filtros de empresa/período
     if "empresa" in texto.lower() or re.search(r"\d{4}-\d{2}-\d{2}", texto):
         novos = {}
         novos.update(extrair_periodo(texto))
@@ -141,17 +156,21 @@ async def mensagem(msg: Message):
         {"label": "💳 Segunda Via de Boletos", "action": "buscar_boletos_cpf"},
         {"label": "📊 Resumo Financeiro", "action": "resumo_financeiro"},
         {"label": "🏗️ Gastos por Obra", "action": "gastos_por_obra"},
+        {"label": "🎬 Gerar Apresentação", "action": "apresentacao_gamma"},
     ]
 
     if not texto or acao == "saudacao":
         return {
             "text": "👋 Olá! Sou a Constru.IA.\n"
-                    "Posso te ajudar com: Pedidos, Boletos, Resumo Financeiro, Gastos por Obra/Centro de Custo e Análise IA.\n"
-                    "Dica: defina filtros com: `empresa 2 2024-01-01 a 2024-12-31`",
+                    "Posso te ajudar com: Pedidos, Boletos, Resumo Financeiro, Gastos por Obra/Centro de Custo e Análises com IA.\n"
+                    "Dica: defina filtros com: `empresa 1 2024-01-01 a 2024-12-31`",
             "buttons": menu_inicial,
         }
 
     try:
+        # ========================================================
+        # 🔐 CPF / Boletos
+        # ========================================================
         if msg.user in usuarios_contexto and usuarios_contexto[msg.user].get("aguardando_confirmacao"):
             if texto.lower() in ["sim", "confirmar", "ok", "✅ confirmar"]:
                 cpf = usuarios_contexto[msg.user]["cpf"]
@@ -185,6 +204,9 @@ async def mensagem(msg: Message):
             t, p = parametros.get("titulo_id"), parametros.get("parcela_id")
             return {"text": gerar_link_boleto(t, p), "buttons": menu_inicial}
 
+        # ========================================================
+        # 📦 Pedidos de compra
+        # ========================================================
         if acao == "listar_pedidos_pendentes":
             pedidos = listar_pedidos_pendentes()
             if not pedidos:
@@ -215,12 +237,19 @@ async def mensagem(msg: Message):
                     "pdf_base64": base64.b64encode(pdf).decode(),
                     "filename": f"pedido_{pid}.pdf"}
 
+        # ========================================================
+        # 💰 Financeiro
+        # ========================================================
         if acao == "resumo_financeiro":
             return {"text": resumo_financeiro(**filtros), "buttons": menu_inicial}
         if acao == "gastos_por_obra":
             return {"text": gastos_por_obra(**filtros), "buttons": menu_inicial}
         if acao == "gastos_por_centro_custo":
             return {"text": gastos_por_centro_custo(**filtros), "buttons": menu_inicial}
+
+        # ========================================================
+        # 🤖 Inteligência Artificial / Gamma Mode
+        # ========================================================
         if acao == "analise_financeira":
             rel = gerar_relatorio_json(**filtros)
             df = pd.DataFrame(rel.get("todas_despesas", []))
@@ -229,12 +258,26 @@ async def mensagem(msg: Message):
             texto_ia = gerar_analise_financeira("Relatório Financeiro (despesas)", df)
             return {"text": texto_ia, "buttons": menu_inicial}
 
+        if acao == "apresentacao_gamma":
+            rel = gerar_relatorio_json(**filtros)
+            df = pd.DataFrame(rel.get("todas_despesas", []))
+            if df.empty:
+                return {"text": "⚠️ Sem dados para gerar apresentação."}
+            slides = gerar_apresentacao_financeira("Apresentação Financeira — Constru.IA", df, modo="gamma")
+            return {"text": slides, "buttons": menu_inicial}
+
+        # ========================================================
+        # Default
+        # ========================================================
         return {"text": "🤖 Não entendi. Dica: `resumo_financeiro 2024-01-01 a 2024-12-31 empresa 1`", "buttons": menu_inicial}
 
     except Exception as e:
         logging.exception("❌ Erro geral:")
         return {"text": f"Ocorreu um erro: {e}", "buttons": menu_inicial}
 
+# ============================================================
+# 🌐 Rota de status
+# ============================================================
 @app.get("/")
 def root():
     return {"ok": True, "service": "constru-ai-connect", "status": "running"}
