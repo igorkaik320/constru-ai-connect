@@ -110,6 +110,8 @@ def entender_intencao(texto: str):
         return {"acao": "buscar_boletos_cpf"}
     if re.search(r"\d{11}|\d{3}\.\d{3}\.\d{3}-\d{2}", t):
         return {"acao": "cpf_digitado", "parametros": {"cpf": t}}
+    if "confirmar" in t:
+        return {"acao": "confirmar"}
     if "resumo" in t or "dre" in t or "resultado" in t:
         return {"acao": "resumo_financeiro"}
     if "gasto" in t and "obra" in t:
@@ -189,6 +191,43 @@ async def mensagem(msg: Message):
 
         if acao == "buscar_boletos_cpf":
             return {"text": "💳 Digite o CPF do titular dos boletos.", "buttons": menu_inicial}
+
+        # ========================================================
+        # 💳 CONFIRMAR BOLETOS (etapa 2 do fluxo)
+        # ========================================================
+        if texto.lower() == "confirmar" or acao == "confirmar":
+            ctx = usuarios_contexto.get(msg.user, {})
+            cpf = ctx.get("cpf")
+            if not cpf:
+                return {"text": "⚠️ Nenhum CPF armazenado. Digite novamente.", "buttons": menu_inicial}
+
+            logging.info(f"🔄 Confirmando busca de boletos para CPF {cpf}...")
+            resultado = buscar_boletos_por_cpf(cpf)
+
+            if "erro" in resultado:
+                return {"text": resultado["erro"], "buttons": menu_inicial}
+
+            nome = resultado.get("nome")
+            boletos = resultado.get("boletos", [])
+            linhas = [
+                f"📄 *Título {b['titulo_id']} / Parcela {b['parcela_id']}*\n"
+                f"💰 Valor: R$ {b['valor']:,.2f}\n"
+                f"📅 Vencimento: {b['vencimento']}\n"
+                f"📝 {b['descricao']}"
+                for b in boletos
+            ]
+            texto_boletos = "\n\n".join(linhas[:10])
+            usuarios_contexto[msg.user] = {}
+
+            return {
+                "text": f"✅ *Boletos disponíveis para {nome}:*\n\n{texto_boletos}\n\n"
+                        "Para gerar a 2ª via de um boleto específico, envie: `boleto [título] [parcela]`",
+                "buttons": [
+                    {"label": "💳 Outra busca por CPF", "action": "buscar_boletos_cpf"},
+                    {"label": "📋 Pedidos Pendentes", "action": "listar_pedidos_pendentes"},
+                    {"label": "📊 Resumo Financeiro", "action": "resumo_financeiro"},
+                ],
+            }
 
         if acao == "link_boleto":
             t, p = parametros.get("titulo_id"), parametros.get("parcela_id")
