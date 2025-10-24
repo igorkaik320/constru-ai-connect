@@ -5,7 +5,7 @@ import json
 from base64 import b64encode
 from datetime import datetime, timedelta
 
-logging.warning("🚀 Rodando versão 5.3.0 do sienge_financeiro.py (com Apropriação Financeira)")
+logging.warning("🚀 Rodando versão 5.3.1 do sienge_financeiro.py (com filtro de empresa e apropriação financeira)")
 
 # ============================================================
 # 🔐 Configurações de autenticação
@@ -24,7 +24,7 @@ json_headers = {
 }
 
 # ============================================================
-# Cache simples para evitar requisições repetidas
+# Cache simples
 # ============================================================
 _cache = {}
 
@@ -49,10 +49,6 @@ def get_cached(url):
 # 🧾 Apropriação Financeira (Plano de Contas)
 # ============================================================
 def get_apropriacoes_financeiras(bill_id: int):
-    """
-    Busca as apropriações financeiras (categorias orçamentárias)
-    vinculadas a um título específico no Sienge.
-    """
     try:
         url = f"{BASE_URL}/bills/{bill_id}/budget-categories"
         logging.info(f"➡️ GET {url} (apropriações financeiras)")
@@ -76,7 +72,6 @@ def get_apropriacoes_financeiras(bill_id: int):
                 })
             return aprop_detalhes
         elif r.status_code == 404:
-            logging.warning(f"📭 Nenhuma apropriação encontrada para bill {bill_id}")
             return []
         else:
             logging.error(f"❌ Erro {r.status_code} ao buscar apropriações: {r.text[:200]}")
@@ -94,29 +89,36 @@ def periodo_padrao():
     return inicio.isoformat(), fim.isoformat()
 
 # ============================================================
-# Função base de requisição (com retry e logs)
+# Função base de requisição (com retry e filtro empresa)
 # ============================================================
 def sienge_get(endpoint, params=None, max_retries=3):
     url = f"{BASE_URL}/{endpoint}"
     if params is None:
         params = {}
+
+    # 🧭 Ajusta filtros padrão
     if "startDate" not in params:
         inicio, fim = periodo_padrao()
         params["startDate"], params["endDate"] = inicio, fim
+
+    # ✅ Novo: adiciona filtro de empresa se existir
+    if "enterpriseId" not in params:
+        if "empresa" in params:
+            params["enterpriseId"] = params["empresa"]
+        elif "empresa_id" in params:
+            params["enterpriseId"] = params["empresa_id"]
+        elif "companyId" in params:
+            params["enterpriseId"] = params["companyId"]
 
     for tentativa in range(1, max_retries + 1):
         try:
             logging.info(f"➡️ GET {url} -> {params}")
             r = requests.get(url, headers=json_headers, params=params, timeout=40)
             logging.info(f"📦 Status: {r.status_code}")
-            time.sleep(0.35)
 
             if r.status_code == 200:
                 data = r.json()
                 results = data.get("results") or data
-                logging.info(f"📊 {endpoint}: {len(results)} registros retornados.")
-                if isinstance(results, list) and len(results) > 0:
-                    logging.info(json.dumps(results[:2], indent=2, ensure_ascii=False))
                 return results
 
             elif r.status_code == 429:
@@ -150,8 +152,9 @@ def resumo_financeiro(params=None, **kwargs):
     total_despesas = sum(float(c.get("totalInvoiceAmount") or c.get("totalValueAmount") or 0) for c in contas_pagar)
     lucro = total_receitas - total_despesas
 
+    empresa = params.get("enterpriseId", "Todas")
     return (
-        f"📊 **Resumo Financeiro ({params.get('startDate')} → {params.get('endDate')})**\n\n"
+        f"📊 **Resumo Financeiro — Empresa {empresa} ({params.get('startDate')} → {params.get('endDate')})**\n\n"
         f"💵 Receitas: R$ {total_receitas:,.2f}\n"
         f"💸 Despesas: R$ {total_despesas:,.2f}\n"
         f"📈 Resultado: R$ {lucro:,.2f}"
@@ -172,14 +175,8 @@ def gastos_por_obra(params=None, **kwargs):
             if link["rel"] == "buildingsCost":
                 obra = get_cached(link["href"])
                 break
-        if obra == "N/A":
-            obra = item.get("notes", "Obra não informada")
-
         valor = float(item.get("totalInvoiceAmount") or item.get("totalValueAmount") or 0)
         obras[obra] = obras.get(obra, 0) + valor
-
-    if not obras:
-        return "📭 Nenhum gasto encontrado."
 
     obras = dict(sorted(obras.items(), key=lambda x: x[1], reverse=True))
     total = sum(obras.values())
@@ -191,7 +188,7 @@ def gastos_por_obra(params=None, **kwargs):
         percentual = (valor / total * 100) if total else 0
         linhas.append(f"🏗️ **{obra[:60]}** — R$ {valor:,.2f} ({percentual:.1f}%)")
 
-    return f"📊 **Top Obras por Gastos ({params.get('startDate')} → {params.get('endDate')})**\n\n" + "\n".join(linhas)
+    return f"📊 **Top Obras ({params.get('startDate')} → {params.get('endDate')})**\n\n" + "\n".join(linhas)
 
 # ============================================================
 # 📂 Gastos por Centro de Custo
@@ -210,9 +207,6 @@ def gastos_por_centro_custo(params=None, **kwargs):
                 break
         valor = float(item.get("totalInvoiceAmount") or item.get("totalValueAmount") or 0)
         centros[centro] = centros.get(centro, 0) + valor
-
-    if not centros:
-        return "📭 Nenhum dado encontrado."
 
     centros = dict(sorted(centros.items(), key=lambda x: x[1], reverse=True))
     linhas = [f"📂 {cc}: R$ {valor:,.2f}" for cc, valor in list(centros.items())[:10]]
@@ -267,8 +261,6 @@ def gerar_relatorio_json(params=None, **kwargs):
             "tipo_lancamento": item.get("originId", ""),
             "apropriacoes_financeiras": aprop_fin,
         })
-
-    logging.info(f"🧾 Total despesas extraídas: {len(todas_despesas)}")
 
     return {
         "todas_despesas": todas_despesas,
