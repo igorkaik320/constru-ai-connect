@@ -14,12 +14,8 @@ from sienge.sienge_pedidos import (
     gerar_relatorio_pdf_bytes,
 )
 from sienge.sienge_boletos import buscar_boletos_por_cpf, gerar_link_boleto
-from sienge.sienge_financeiro import (
-    resumo_financeiro,
-    gastos_por_obra,
-    gastos_por_centro_custo,
-    gerar_relatorio_json,
-)
+from sienge.sienge_financeiro import gerar_relatorio_json
+
 from sienge.sienge_ia import gerar_analise_financeira
 from dashboard_financeiro import gerar_relatorio_gamma
 
