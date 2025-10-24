@@ -5,7 +5,7 @@ import json
 from base64 import b64encode
 from datetime import datetime, timedelta
 
-logging.warning("🚀 Rodando versão 5.2.1 do sienge_financeiro.py (enriquecimento + relatório interno de verificação)")
+logging.warning("🚀 Rodando versão 5.3.0 do sienge_financeiro.py (com Apropriação Financeira)")
 
 # ============================================================
 # 🔐 Configurações de autenticação
@@ -44,6 +44,46 @@ def get_cached(url):
         logging.error(f"⚠️ Erro ao buscar {url}: {e}")
     _cache[url] = "N/A"
     return "N/A"
+
+# ============================================================
+# 🧾 Apropriação Financeira (Plano de Contas)
+# ============================================================
+def get_apropriacoes_financeiras(bill_id: int):
+    """
+    Busca as apropriações financeiras (categorias orçamentárias)
+    vinculadas a um título específico no Sienge.
+    """
+    try:
+        url = f"{BASE_URL}/bills/{bill_id}/budget-categories"
+        logging.info(f"➡️ GET {url} (apropriações financeiras)")
+        r = requests.get(url, headers=json_headers, timeout=20)
+        if r.status_code == 200:
+            data = r.json()
+            results = data.get("results", [])
+            aprop_detalhes = []
+            for item in results:
+                categoria = item.get("paymentCategoriesId", "N/A")
+                percentual = item.get("percentage", 0)
+                centro = "N/A"
+                for link in item.get("links", []):
+                    if link.get("rel") == "debtor":
+                        centro = get_cached(link.get("href"))
+                        break
+                aprop_detalhes.append({
+                    "categoria": categoria,
+                    "percentual": percentual,
+                    "debtor": centro,
+                })
+            return aprop_detalhes
+        elif r.status_code == 404:
+            logging.warning(f"📭 Nenhuma apropriação encontrada para bill {bill_id}")
+            return []
+        else:
+            logging.error(f"❌ Erro {r.status_code} ao buscar apropriações: {r.text[:200]}")
+            return []
+    except Exception as e:
+        logging.exception(f"⚠️ Erro ao buscar apropriações financeiras do bill {bill_id}: {e}")
+        return []
 
 # ============================================================
 # Datas padrão
@@ -211,6 +251,9 @@ def gerar_relatorio_json(params=None, **kwargs):
             descricao = str(descricao)
         descricao = descricao[:200]
 
+        bill_id = item.get("id")
+        aprop_fin = get_apropriacoes_financeiras(bill_id) if bill_id else []
+
         todas_despesas.append({
             "empresa": empresa,
             "fornecedor": fornecedor,
@@ -222,6 +265,7 @@ def gerar_relatorio_json(params=None, **kwargs):
             "descricao": descricao,
             "documento": item.get("documentNumber", ""),
             "tipo_lancamento": item.get("originId", ""),
+            "apropriacoes_financeiras": aprop_fin,
         })
 
     logging.info(f"🧾 Total despesas extraídas: {len(todas_despesas)}")
@@ -231,32 +275,3 @@ def gerar_relatorio_json(params=None, **kwargs):
         "dre": {"formatado": dre_formatado},
         "total_registros": len(todas_despesas)
     }
-
-# ============================================================
-# 🧾 Relatório de Verificação (antes da IA)
-# ============================================================
-def gerar_relatorio_resumo(params=None, **kwargs):
-    rel = gerar_relatorio_json(params, **kwargs)
-    despesas = rel["todas_despesas"]
-
-    resumo_fornecedor = {}
-    resumo_centro = {}
-    resumo_obra = {}
-
-    for d in despesas:
-        resumo_fornecedor[d["fornecedor"]] = resumo_fornecedor.get(d["fornecedor"], 0) + d["valor_total"]
-        resumo_centro[d["centro_custo"]] = resumo_centro.get(d["centro_custo"], 0) + d["valor_total"]
-        resumo_obra[d["obra"]] = resumo_obra.get(d["obra"], 0) + d["valor_total"]
-
-    def formatar_dict(d, titulo):
-        d = dict(sorted(d.items(), key=lambda x: x[1], reverse=True))
-        linhas = [f"{k}: R$ {v:,.2f}" for k, v in list(d.items())[:8]]
-        return f"\n📋 **{titulo}**\n" + "\n".join(linhas)
-
-    return (
-        f"✅ Relatório interno de verificação ({params.get('startDate')} → {params.get('endDate')})\n"
-        f"{formatar_dict(resumo_fornecedor, 'Top Fornecedores')}\n"
-        f"{formatar_dict(resumo_centro, 'Top Centros de Custo')}\n"
-        f"{formatar_dict(resumo_obra, 'Top Obras')}\n"
-        f"📈 {rel['dre']['formatado']}"
-    )
