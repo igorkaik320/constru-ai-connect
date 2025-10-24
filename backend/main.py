@@ -21,7 +21,7 @@ from sienge.sienge_financeiro import (
     gerar_relatorio_json,
 )
 from sienge.sienge_ia import gerar_analise_financeira
-from dashboard_financeiro import gerar_relatorio_gamma  # ✅ NOVO MÓDULO HTML DARK MODE
+from dashboard_financeiro import gerar_relatorio_gamma
 
 # ============================================================
 # 🚀 CONFIGURAÇÃO DO SERVIDOR FASTAPI
@@ -35,7 +35,6 @@ app.add_middleware(
     allow_methods=["*"], allow_headers=["*"],
 )
 
-# === Pasta para relatórios e arquivos estáticos ===
 os.makedirs("static", exist_ok=True)
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
@@ -134,7 +133,7 @@ async def mensagem(msg: Message):
     logging.info(f"📩 Mensagem recebida: {msg.user} -> {msg.text}")
     texto = (msg.text or "").strip()
 
-    # Atualiza filtros de empresa/período
+    # Atualiza filtros
     if "empresa" in texto.lower() or re.search(r"\d{4}-\d{2}-\d{2}", texto):
         novos = {}
         novos.update(extrair_periodo(texto))
@@ -193,7 +192,7 @@ async def mensagem(msg: Message):
             return {"text": "💳 Digite o CPF do titular dos boletos.", "buttons": menu_inicial}
 
         # ========================================================
-        # 💳 CONFIRMAR BOLETOS (etapa 2 do fluxo)
+        # 💳 CONFIRMAR BOLETOS (ETAPA APRIMORADA)
         # ========================================================
         if texto.lower() == "confirmar" or acao == "confirmar":
             ctx = usuarios_contexto.get(msg.user, {})
@@ -201,29 +200,35 @@ async def mensagem(msg: Message):
             if not cpf:
                 return {"text": "⚠️ Nenhum CPF armazenado. Digite novamente.", "buttons": menu_inicial}
 
-            logging.info(f"🔄 Confirmando busca de boletos para CPF {cpf}...")
             resultado = buscar_boletos_por_cpf(cpf)
-
             if "erro" in resultado:
                 return {"text": resultado["erro"], "buttons": menu_inicial}
 
             nome = resultado.get("nome")
             boletos = resultado.get("boletos", [])
-            linhas = [
-                f"📄 *Título {b['titulo_id']} / Parcela {b['parcela_id']}*\n"
-                f"💰 Valor: R$ {b['valor']:,.2f}\n"
-                f"📅 Vencimento: {b['vencimento']}\n"
-                f"📝 {b['descricao']}"
-                for b in boletos
-            ]
-            texto_boletos = "\n\n".join(linhas[:10])
-            usuarios_contexto[msg.user] = {}
+            if not boletos:
+                return {"text": f"📭 Nenhum boleto disponível para {nome}.", "buttons": menu_inicial}
 
+            linhas, botoes = [], []
+            for b in boletos:
+                titulo, parcela = b["titulo_id"], b["parcela_id"]
+                valor, venc, desc = b.get("valor", 0.0), b.get("vencimento"), b.get("descricao", "-")
+                linhas.append(
+                    f"📄 *Título {titulo} / Parcela {parcela}*\n"
+                    f"💰 Valor: R$ {valor:,.2f}\n"
+                    f"📅 Vencimento: {venc}\n"
+                    f"📝 {desc}"
+                )
+                botoes.append({
+                    "label": f"📥 Gerar boleto {titulo}/{parcela}",
+                    "action": f"boleto {titulo} {parcela}"
+                })
+
+            usuarios_contexto[msg.user] = {}
             return {
-                "text": f"✅ *Boletos disponíveis para {nome}:*\n\n{texto_boletos}\n\n"
-                        "Para gerar a 2ª via de um boleto específico, envie: `boleto [título] [parcela]`",
-                "buttons": [
-                    {"label": "💳 Outra busca por CPF", "action": "buscar_boletos_cpf"},
+                "text": f"✅ *Boletos disponíveis para {nome}:*\n\n" + "\n\n".join(linhas[:15]),
+                "buttons": botoes + [
+                    {"label": "💳 Nova busca por CPF", "action": "buscar_boletos_cpf"},
                     {"label": "📋 Pedidos Pendentes", "action": "listar_pedidos_pendentes"},
                     {"label": "📊 Resumo Financeiro", "action": "resumo_financeiro"},
                 ],
@@ -234,7 +239,7 @@ async def mensagem(msg: Message):
             return {"text": gerar_link_boleto(t, p), "buttons": menu_inicial}
 
         # ========================================================
-        # 📦 PEDIDOS DE COMPRA
+        # 📦 PEDIDOS
         # ========================================================
         if acao == "listar_pedidos_pendentes":
             pedidos = listar_pedidos_pendentes()
@@ -267,52 +272,37 @@ async def mensagem(msg: Message):
                     "filename": f"pedido_{pid}.pdf"}
 
         # ========================================================
-        # 💰 FINANCEIRO / IA / RELATÓRIO GAMMA DARK MODE
+        # 💰 FINANCEIRO / IA
         # ========================================================
         if acao == "resumo_financeiro":
             return {"text": resumo_financeiro(**filtros), "buttons": menu_inicial}
-
         if acao == "gastos_por_obra":
             return {"text": gastos_por_obra(**filtros), "buttons": menu_inicial}
-
         if acao == "gastos_por_centro_custo":
             return {"text": gastos_por_centro_custo(**filtros), "buttons": menu_inicial}
-
         if acao == "analise_financeira":
             rel = gerar_relatorio_json(**filtros)
             df = pd.DataFrame(rel.get("todas_despesas", []))
             if df.empty:
                 return {"text": "⚠️ Sem dados para análise."}
-            texto_ia = gerar_analise_financeira("Relatório Financeiro", df)
-            return {"text": texto_ia, "buttons": menu_inicial}
-
+            return {"text": gerar_analise_financeira("Relatório Financeiro", df), "buttons": menu_inicial}
         if acao == "apresentacao_gamma":
-            logging.info("🎬 Iniciando geração de relatório Gamma Dark Mode...")
             rel = gerar_relatorio_json(**filtros)
             df = pd.DataFrame(rel.get("todas_despesas", []))
             dre = rel.get("dre", {}).get("formatado", {})
             if df.empty:
                 return {"text": "⚠️ Sem dados para gerar relatório."}
-
             link = gerar_relatorio_gamma(df, dre, filtros, msg.user)
-            logging.info(f"✅ Relatórios HTML gerados com sucesso: {link}")
+            return {"text": f"🎬 Relatório Gamma (Dark Mode) gerado!\n\n[📊 Acessar Relatório]({link})", "buttons": menu_inicial}
 
-            return {
-                "text": f"🎬 Relatório Gamma (Dark Mode) gerado com sucesso!\n\n[📊 Acessar Relatório]({link})",
-                "buttons": menu_inicial,
-            }
-
-        # ========================================================
-        # DEFAULT
-        # ========================================================
-        return {"text": "🤖 Não entendi. Dica: `empresa 1 2024-01-01 a 2024-12-31` para definir filtros.", "buttons": menu_inicial}
+        return {"text": "🤖 Não entendi. Dica: `empresa 1 2024-01-01 a 2024-12-31`", "buttons": menu_inicial}
 
     except Exception as e:
         logging.exception("❌ Erro geral:")
         return {"text": f"Ocorreu um erro: {e}", "buttons": menu_inicial}
 
 # ============================================================
-# 🌐 ROTA DE TESTE FINANCEIRO
+# 🌐 TESTE FINANCEIRO
 # ============================================================
 @app.get("/teste-financeiro")
 def teste_financeiro():
