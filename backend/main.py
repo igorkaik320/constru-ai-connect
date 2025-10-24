@@ -21,7 +21,7 @@ from sienge.sienge_financeiro import (
     gerar_relatorio_json,
 )
 from sienge.sienge_ia import gerar_analise_financeira
-from dashboard_financeiro import gerar_relatorio_gamma  # 🔥 Novo módulo Gamma Dark Mode
+from dashboard_financeiro import gerar_relatorio_gamma  # ✅ NOVO MÓDULO HTML DARK MODE
 
 # ============================================================
 # 🚀 CONFIGURAÇÃO DO SERVIDOR FASTAPI
@@ -66,7 +66,7 @@ def extrair_periodo(texto: str):
     return {}
 
 def extrair_empresa(texto: str):
-    m = re.search(r"empresa\\s+(\\d+)", texto)
+    m = re.search(r"empresa\s+(\d+)", texto)
     if m:
         return {"enterpriseId": m.group(1)}
     return {}
@@ -91,24 +91,24 @@ def entender_intencao(texto: str):
         return {"acao": "saudacao"}
     if "pedido" in t and "pendente" in t:
         return {"acao": "listar_pedidos_pendentes"}
-    if re.search(r"itens\\s+do\\s+pedido\\s+\\d+", t):
-        pid = re.findall(r"\\d+", t)[-1]
+    if re.search(r"itens\s+do\s+pedido\s+\d+", t):
+        pid = re.findall(r"\d+", t)[-1]
         return {"acao": "itens_pedido", "parametros": {"pedido_id": int(pid)}}
     if "autorizar pedido" in t:
-        pid = re.findall(r"\\d+", t)[-1]
+        pid = re.findall(r"\d+", t)[-1]
         return {"acao": "autorizar_pedido", "parametros": {"pedido_id": int(pid)}}
     if "reprovar pedido" in t:
-        pid = re.findall(r"\\d+", t)[-1]
+        pid = re.findall(r"\d+", t)[-1]
         return {"acao": "reprovar_pedido", "parametros": {"pedido_id": int(pid)}}
     if "pdf" in t or "relatorio" in t or "relatório" in t:
-        nums = re.findall(r"\\d+", t)
+        nums = re.findall(r"\d+", t)
         return {"acao": "relatorio_pdf", "parametros": {"pedido_id": int(nums[-1])}} if nums else {}
     if "segunda via" in t or "boleto" in t:
-        nums = re.findall(r"\\d+", t)
+        nums = re.findall(r"\d+", t)
         if len(nums) >= 2:
             return {"acao": "link_boleto", "parametros": {"titulo_id": int(nums[-2]), "parcela_id": int(nums[-1])}}
         return {"acao": "buscar_boletos_cpf"}
-    if re.search(r"\\d{11}|\\d{3}\\.\\d{3}\\.\\d{3}-\\d{2}", t):
+    if re.search(r"\d{11}|\d{3}\.\d{3}\.\d{3}-\d{2}", t):
         return {"acao": "cpf_digitado", "parametros": {"cpf": t}}
     if "resumo" in t or "dre" in t or "resultado" in t:
         return {"acao": "resumo_financeiro"}
@@ -120,7 +120,7 @@ def entender_intencao(texto: str):
         return {"acao": "analise_financeira"}
     if "apresentacao" in t or "slides" in t or "gamma" in t:
         return {"acao": "apresentacao_gamma"}
-    if "empresa" in t or re.search(r"\\d{4}-\\d{2}-\\d{2}", t):
+    if "empresa" in t or re.search(r"\d{4}-\d{2}-\d{2}", t):
         return {"acao": "definir_filtros"}
     return {"acao": None}
 
@@ -133,17 +133,17 @@ async def mensagem(msg: Message):
     texto = (msg.text or "").strip()
 
     # Atualiza filtros de empresa/período
-    if "empresa" in texto.lower() or re.search(r"\\d{4}-\\d{2}-\\d{2}", texto):
+    if "empresa" in texto.lower() or re.search(r"\d{4}-\d{2}-\d{2}", texto):
         novos = {}
         novos.update(extrair_periodo(texto))
         novos.update(extrair_empresa(texto))
         if novos:
             atualizados = atualizar_filtros(msg.user, novos)
             return {
-                "text": "🧭 Filtros definidos.\\n"
-                        + (f"• Início: {atualizados.get('startDate')}\\n" if atualizados.get("startDate") else "")
-                        + (f"• Fim: {atualizados.get('endDate')}\\n" if atualizados.get("endDate") else "")
-                        + (f"• Empresa: {atualizados.get('enterpriseId')}\\n" if atualizados.get("enterpriseId") else ""),
+                "text": "🧭 Filtros definidos.\n"
+                        + (f"• Início: {atualizados.get('startDate')}\n" if atualizados.get("startDate") else "")
+                        + (f"• Fim: {atualizados.get('endDate')}\n" if atualizados.get("endDate") else "")
+                        + (f"• Empresa: {atualizados.get('enterpriseId')}\n" if atualizados.get("enterpriseId") else ""),
                 "buttons": [
                     {"label": "📊 Resumo Financeiro", "action": "resumo_financeiro"},
                     {"label": "🏗️ Gastos por Obra", "action": "gastos_por_obra"},
@@ -161,13 +161,13 @@ async def mensagem(msg: Message):
         {"label": "💳 Segunda Via de Boletos", "action": "buscar_boletos_cpf"},
         {"label": "📊 Resumo Financeiro", "action": "resumo_financeiro"},
         {"label": "🏗️ Gastos por Obra", "action": "gastos_por_obra"},
-        {"label": "🎬 Gerar Relatório Gamma", "action": "apresentacao_gamma"},
+        {"label": "🎬 Relatório Gamma Dark Mode", "action": "apresentacao_gamma"},
     ]
 
     if not texto or acao == "saudacao":
         return {
-            "text": "👋 Olá! Sou a Constru.IA.\\n"
-                    "Posso te ajudar com: Pedidos, Boletos, Resumo Financeiro, Gastos e Relatórios com IA.\\n"
+            "text": "👋 Olá! Sou a Constru.IA.\n"
+                    "Posso te ajudar com: Pedidos, Boletos, Resumo Financeiro, Gastos e Relatórios com IA.\n"
                     "Dica: defina filtros com: `empresa 1 2024-01-01 a 2024-12-31`",
             "buttons": menu_inicial,
         }
@@ -177,7 +177,7 @@ async def mensagem(msg: Message):
         # 💳 BOLETOS / CPF
         # ========================================================
         if acao == "cpf_digitado":
-            cpf = re.sub(r"\\D", "", parametros.get("cpf", ""))
+            cpf = re.sub(r"\D", "", parametros.get("cpf", ""))
             if len(cpf) != 11:
                 return {"text": "⚠️ CPF inválido. Digite novamente."}
             resultado = buscar_boletos_por_cpf(cpf)
@@ -203,13 +203,13 @@ async def mensagem(msg: Message):
                 return {"text": "📭 Nenhum pedido pendente."}
             linhas = [f"📦 Pedido {p['id']} — {money(p.get('totalAmount', 0))}" for p in pedidos]
             botoes = [{"label": f"Itens {p['id']}", "action": f"itens do pedido {p['id']}"} for p in pedidos]
-            return {"text": "\\n".join(linhas), "buttons": botoes}
+            return {"text": "\n".join(linhas), "buttons": botoes}
 
         if acao == "itens_pedido":
             pid = parametros.get("pedido_id")
             itens = itens_pedido(pid)
             linhas = [f"• {i.get('description', 'Item')} — {money(i.get('totalAmount', 0))}" for i in itens]
-            return {"text": f"📦 Itens do pedido {pid}:\\n" + "\\n".join(linhas),
+            return {"text": f"📦 Itens do pedido {pid}:\n" + "\n".join(linhas),
                     "buttons": [{"label": "✅ Autorizar", "action": f"autorizar pedido {pid}"},
                                 {"label": "❌ Reprovar", "action": f"reprovar pedido {pid}"},
                                 {"label": "📄 PDF", "action": f"gerar pdf pedido {pid}"}]}
@@ -228,7 +228,7 @@ async def mensagem(msg: Message):
                     "filename": f"pedido_{pid}.pdf"}
 
         # ========================================================
-        # 💰 FINANCEIRO / IA / RELATÓRIO GAMMA
+        # 💰 FINANCEIRO / IA / RELATÓRIO GAMMA DARK MODE
         # ========================================================
         if acao == "resumo_financeiro":
             return {"text": resumo_financeiro(**filtros), "buttons": menu_inicial}
@@ -241,50 +241,49 @@ async def mensagem(msg: Message):
 
         if acao == "analise_financeira":
             rel = gerar_relatorio_json(**filtros)
-            df = pd.DataFrame(rel.get(\"todas_despesas\", []))
+            df = pd.DataFrame(rel.get("todas_despesas", []))
             if df.empty:
-                return {\"text\": \"⚠️ Sem dados para análise.\"}
-            texto_ia = gerar_analise_financeira(\"Relatório Financeiro\", df)
-            return {\"text\": texto_ia, \"buttons\": menu_inicial}
+                return {"text": "⚠️ Sem dados para análise."}
+            texto_ia = gerar_analise_financeira("Relatório Financeiro", df)
+            return {"text": texto_ia, "buttons": menu_inicial}
 
-        if acao == \"apresentacao_gamma\":
-            logging.info(\"🎬 Iniciando geração de relatório Gamma Dark Mode...\")
+        if acao == "apresentacao_gamma":
+            logging.info("🎬 Iniciando geração de relatório Gamma Dark Mode...")
             rel = gerar_relatorio_json(**filtros)
-            df = pd.DataFrame(rel.get(\"todas_despesas\", []))
-            dre = rel.get(\"dre\", {}).get(\"formatado\", {})
+            df = pd.DataFrame(rel.get("todas_despesas", []))
+            dre = rel.get("dre", {}).get("formatado", {})
             if df.empty:
-                return {\"text\": \"⚠️ Sem dados para gerar relatório.\"}
+                return {"text": "⚠️ Sem dados para gerar relatório."}
 
             link = gerar_relatorio_gamma(df, dre, filtros, msg.user)
-            logging.info(f\"✅ Relatórios HTML gerados com sucesso: {link}\")
+            logging.info(f"✅ Relatórios HTML gerados com sucesso: {link}")
 
             return {
-                \"text\": f\"🎬 Relatório Gamma (Dark Mode) gerado com sucesso!\\n\\n[📊 Acessar Relatório]({link})\",
-                \"buttons\": menu_inicial,
+                "text": f"🎬 Relatório Gamma (Dark Mode) gerado com sucesso!\n\n[📊 Acessar Relatório]({link})",
+                "buttons": menu_inicial,
             }
 
         # ========================================================
         # DEFAULT
         # ========================================================
-        return {\"text\": \"🤖 Não entendi. Dica: `empresa 1 2024-01-01 a 2024-12-31` para definir filtros.\", \"buttons\": menu_inicial}
+        return {"text": "🤖 Não entendi. Dica: `empresa 1 2024-01-01 a 2024-12-31` para definir filtros.", "buttons": menu_inicial}
 
     except Exception as e:
-        logging.exception(\"❌ Erro geral:\")
-        return {\"text\": f\"Ocorreu um erro: {e}\", \"buttons\": menu_inicial}
+        logging.exception("❌ Erro geral:")
+        return {"text": f"Ocorreu um erro: {e}", "buttons": menu_inicial}
 
 # ============================================================
 # 🌐 ROTA DE TESTE FINANCEIRO
 # ============================================================
-@app.get(\"/teste-financeiro\")
+@app.get("/teste-financeiro")
 def teste_financeiro():
-    filtros = {\"startDate\": \"2024-01-01\", \"endDate\": \"2024-12-31\", \"enterpriseId\": \"1\"}
+    filtros = {"startDate": "2024-01-01", "endDate": "2024-12-31", "enterpriseId": "1"}
     rel = gerar_relatorio_json(**filtros)
-    return {\"resumo\": rel.get(\"dre\", {}).get(\"formatado\", {}), \"amostra\": rel.get(\"todas_despesas\", [])[:5]}
+    return {"resumo": rel.get("dre", {}).get("formatado", {}), "amostra": rel.get("todas_despesas", [])[:5]}
 
 # ============================================================
 # 🌍 STATUS
 # ============================================================
-@app.get(\"/\")
+@app.get("/")
 def root():
-    return {\"ok\": True, \"service\": \"constru-ai-connect\", \"status\": \"running\"}
-
+    return {"ok": True, "service": "constru-ai-connect", "status": "running"}
