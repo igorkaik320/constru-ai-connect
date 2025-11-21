@@ -6,6 +6,9 @@ from pydantic import BaseModel
 import logging, re, base64, os
 import pandas as pd
 
+# Twilio
+from twilio.rest import Client
+
 # === MÓDULOS LOCAIS ===
 from sienge.sienge_pedidos import (
     listar_pedidos_pendentes,
@@ -33,6 +36,23 @@ app.add_middleware(
 
 os.makedirs("static", exist_ok=True)
 app.mount("/static", StaticFiles(directory="static"), name="static")
+
+# ============================================================
+# 🔐 CONFIG TWILIO (WHATSAPP)
+# ============================================================
+TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID")
+TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
+TWILIO_WHATSAPP_FROM = os.getenv("TWILIO_WHATSAPP_FROM", "whatsapp:+14155238886")
+
+twilio_client = None
+if TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN:
+    try:
+        twilio_client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+        logging.info("✅ Cliente Twilio inicializado com sucesso.")
+    except Exception as e:
+        logging.error(f"❌ Erro ao inicializar cliente Twilio: {e}")
+else:
+    logging.warning("⚠️ TWILIO_ACCOUNT_SID ou TWILIO_AUTH_TOKEN não configurados.")
 
 # ============================================================
 # 📩 MODELOS DE DADOS
@@ -171,7 +191,7 @@ def entender_intencao(texto: str):
     return {"acao": None}
 
 # ============================================================
-# 💬 ENDPOINT PRINCIPAL DE MENSAGENS
+# 💬 ENDPOINT PRINCIPAL DE MENSAGENS (JÁ FUNCIONAVA)
 # ============================================================
 @app.post("/mensagem")
 async def mensagem(msg: Message):
@@ -375,20 +395,30 @@ async def webhook_twilio(
 ):
     logging.info(f"📲 WhatsApp de {From}: {Body}")
 
-    # Reaproveita a lógica já existente do /mensagem
+    # Usa a MESMA lógica do backend normal
     resposta_construia = await mensagem(
         Message(user=From, text=Body)
     )
 
     texto_resposta = resposta_construia.get("text", "Constru.IA: não consegui gerar resposta.")
+    logging.info(f"💬 Resposta para {From}: {texto_resposta}")
 
-    twiml = f"""<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-    <Message>{texto_resposta}</Message>
-</Response>"""
+    # Envia resposta via API da Twilio (em vez de TwiML)
+    if twilio_client:
+        try:
+            twilio_client.messages.create(
+                from_=TWILIO_WHATSAPP_FROM,
+                to=From,
+                body=texto_resposta,
+            )
+            logging.info("✅ Mensagem enviada via Twilio.")
+        except Exception as e:
+            logging.error(f"❌ Erro ao enviar mensagem WhatsApp via Twilio: {e}")
+    else:
+        logging.error("❌ twilio_client não inicializado. Verifique TWILIO_ACCOUNT_SID e TWILIO_AUTH_TOKEN.")
 
-    # 👇 aqui está a mudança importante pro Twilio interpretar
-    return PlainTextResponse(content=twiml, media_type="text/xml")
+    # Twilio só precisa de 200 OK aqui
+    return PlainTextResponse("OK")
 
 # ============================================================
 # 🌐 TESTE FINANCEIRO
