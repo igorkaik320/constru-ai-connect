@@ -10,3 +10,4 @@ pandas==2.2.3
 tabulate
 python-pptx
 python-multipart
+twilio
