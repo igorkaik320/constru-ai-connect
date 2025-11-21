@@ -15,12 +15,9 @@ from sienge.sienge_pedidos import (
     gerar_relatorio_pdf_bytes,
 )
 from sienge.sienge_boletos import buscar_boletos_por_cpf, gerar_link_boleto
-from sienge.sienge_financeiro import (
-    resumo_financeiro,
-    gastos_por_obra,
-    gastos_por_centro_custo,
-    gerar_relatorio_json,
-)
+# ⬇️ mantém só o que EXISTE de fato no módulo
+from sienge.sienge_financeiro import gerar_relatorio_json
+
 from sienge.sienge_ia import gerar_analise_financeira
 from dashboard_financeiro import gerar_relatorio_gamma
 
@@ -52,7 +49,7 @@ class Message(BaseModel):
 def money(v):
     try:
         return f"R$ {float(v):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-    except:
+    except Exception:
         return "R$ 0,00"
 
 usuarios_contexto = {}
@@ -80,6 +77,61 @@ def atualizar_filtros(user: str, novos: dict):
     atuais.update({k: v for k, v in novos.items() if v})
     ctx["filtros"] = atuais
     return atuais
+
+# ============================================================
+# 🔎 HELPERS FINANCEIROS EM CIMA DO gerar_relatorio_json
+#    (para não depender de funções que não existem no módulo)
+# ============================================================
+def resumo_financeiro(**filtros) -> str:
+    rel = gerar_relatorio_json(**filtros)
+    dre_fmt = rel.get("dre", {}).get("formatado", {})
+    if not dre_fmt:
+        return "⚠️ Sem dados para o período/empresa informados."
+
+    receita = dre_fmt.get("Receita Líquida") or dre_fmt.get("Receita", 0)
+    custos = dre_fmt.get("Custo") or dre_fmt.get("Custos", 0)
+    despesas = dre_fmt.get("Despesas") or dre_fmt.get("Despesas Operacionais", 0)
+    resultado = dre_fmt.get("Lucro Líquido") or dre_fmt.get("Resultado", 0)
+
+    linhas = [
+        "📊 *Resumo Financeiro (DRE)*",
+        f"• Receita: {money(receita)}",
+        f"• Custos: {money(custos)}",
+        f"• Despesas: {money(despesas)}",
+        f"• Resultado: {money(resultado)}",
+    ]
+    return "\n".join(linhas)
+
+def gastos_por_obra(**filtros) -> str:
+    rel = gerar_relatorio_json(**filtros)
+    obras = rel.get("por_obra") or rel.get("gastos_por_obra") or []
+    if not obras:
+        return "⚠️ Nenhum gasto por obra encontrado."
+
+    linhas = ["🏗️ *Gastos por obra*"]
+    for o in obras[:20]:
+        nome = (
+            o.get("obra")
+            or o.get("obra_nome")
+            or o.get("descricao")
+            or "-"
+        )
+        valor = o.get("valor") or o.get("total") or 0
+        linhas.append(f"• {nome}: {money(valor)}")
+    return "\n".join(linhas)
+
+def gastos_por_centro_custo(**filtros) -> str:
+    rel = gerar_relatorio_json(**filtros)
+    centros = rel.get("por_centro_custo") or rel.get("gastos_por_centro_custo") or []
+    if not centros:
+        return "⚠️ Nenhum gasto por centro de custo encontrado."
+
+    linhas = ["📂 *Gastos por centro de custo*"]
+    for c in centros[:20]:
+        nome = c.get("centro_custo") or c.get("descricao") or "-"
+        valor = c.get("valor") or c.get("total") or 0
+        linhas.append(f"• {nome}: {money(valor)}")
+    return "\n".join(linhas)
 
 # ============================================================
 # 🧠 INTERPRETAÇÃO DE INTENÇÃO
@@ -144,7 +196,7 @@ async def mensagem(msg: Message):
             return {
                 "text": "🧭 Filtros definidos.\n"
                         + (f"• Início: {atualizados.get('startDate')}\n" if atualizados.get("startDate") else "")
-                        + (f"• Fim: {atualizados.get('endDate')}\n" if atualizados.get("endDate") else "")
+                        + (f"• Fim: {atualizados.get("endDate")}\n" if atualizados.get("endDate") else "")
                         + (f"• Empresa: {atualizados.get('enterpriseId')}\n" if atualizados.get("enterpriseId") else ""),
                 "buttons": [
                     {"label": "📊 Resumo Financeiro", "action": "resumo_financeiro"},
@@ -193,7 +245,7 @@ async def mensagem(msg: Message):
             return {"text": "💳 Digite o CPF do titular dos boletos.", "buttons": menu_inicial}
 
         # ========================================================
-        # 💳 CONFIRMAR BOLETOS (ETAPA APRIMORADA)
+        # 💳 CONFIRMAR BOLETOS
         # ========================================================
         if texto.lower() == "confirmar" or acao == "confirmar":
             ctx = usuarios_contexto.get(msg.user, {})
