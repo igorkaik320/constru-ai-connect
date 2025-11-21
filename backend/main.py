@@ -15,9 +15,7 @@ from sienge.sienge_pedidos import (
     gerar_relatorio_pdf_bytes,
 )
 from sienge.sienge_boletos import buscar_boletos_por_cpf, gerar_link_boleto
-# ⬇️ mantém só o que EXISTE de fato no módulo
 from sienge.sienge_financeiro import gerar_relatorio_json
-
 from sienge.sienge_ia import gerar_analise_financeira
 from dashboard_financeiro import gerar_relatorio_gamma
 
@@ -80,7 +78,6 @@ def atualizar_filtros(user: str, novos: dict):
 
 # ============================================================
 # 🔎 HELPERS FINANCEIROS EM CIMA DO gerar_relatorio_json
-#    (para não depender de funções que não existem no módulo)
 # ============================================================
 def resumo_financeiro(**filtros) -> str:
     rel = gerar_relatorio_json(**filtros)
@@ -110,12 +107,7 @@ def gastos_por_obra(**filtros) -> str:
 
     linhas = ["🏗️ *Gastos por obra*"]
     for o in obras[:20]:
-        nome = (
-            o.get("obra")
-            or o.get("obra_nome")
-            or o.get("descricao")
-            or "-"
-        )
+        nome = o.get("obra") or o.get("obra_nome") or o.get("descricao") or "-"
         valor = o.get("valor") or o.get("total") or 0
         linhas.append(f"• {nome}: {money(valor)}")
     return "\n".join(linhas)
@@ -196,7 +188,7 @@ async def mensagem(msg: Message):
             return {
                 "text": "🧭 Filtros definidos.\n"
                         + (f"• Início: {atualizados.get('startDate')}\n" if atualizados.get("startDate") else "")
-                        + (f"• Fim: {atualizados.get("endDate")}\n" if atualizados.get("endDate") else "")
+                        + (f"• Fim: {atualizados.get('endDate')}\n" if atualizados.get("endDate") else "")
                         + (f"• Empresa: {atualizados.get('enterpriseId')}\n" if atualizados.get("enterpriseId") else ""),
                 "buttons": [
                     {"label": "📊 Resumo Financeiro", "action": "resumo_financeiro"},
@@ -237,9 +229,13 @@ async def mensagem(msg: Message):
             resultado = buscar_boletos_por_cpf(cpf)
             nome = resultado.get("nome", "Cliente não identificado")
             usuarios_contexto[msg.user] = {"cpf": cpf, "nome": nome, "aguardando_confirmacao": True}
-            return {"text": f"🔎 Localizei o cliente *{nome}*. Confirmar para listar as 2ª vias?",
-                    "buttons": [{"label": "✅ Confirmar", "action": "confirmar"},
-                                {"label": "❌ Corrigir CPF", "action": "buscar_boletos_cpf"}]}
+            return {
+                "text": f"🔎 Localizei o cliente *{nome}*. Confirmar para listar as 2ª vias?",
+                "buttons": [
+                    {"label": "✅ Confirmar", "action": "confirmar"},
+                    {"label": "❌ Corrigir CPF", "action": "buscar_boletos_cpf"},
+                ],
+            }
 
         if acao == "buscar_boletos_cpf":
             return {"text": "💳 Digite o CPF do titular dos boletos.", "buttons": menu_inicial}
@@ -272,15 +268,18 @@ async def mensagem(msg: Message):
                     f"📅 Vencimento: {venc}\n"
                     f"📝 {desc}"
                 )
-                botoes.append({
-                    "label": f"📥 Gerar boleto {titulo}/{parcela}",
-                    "action": f"boleto {titulo} {parcela}"
-                })
+                botoes.append(
+                    {
+                        "label": f"📥 Gerar boleto {titulo}/{parcela}",
+                        "action": f"boleto {titulo} {parcela}",
+                    }
+                )
 
             usuarios_contexto[msg.user] = {}
             return {
                 "text": f"✅ *Boletos disponíveis para {nome}:*\n\n" + "\n\n".join(linhas[:15]),
-                "buttons": botoes + [
+                "buttons": botoes
+                + [
                     {"label": "💳 Nova busca por CPF", "action": "buscar_boletos_cpf"},
                     {"label": "📋 Pedidos Pendentes", "action": "listar_pedidos_pendentes"},
                     {"label": "📊 Resumo Financeiro", "action": "resumo_financeiro"},
@@ -306,10 +305,14 @@ async def mensagem(msg: Message):
             pid = parametros.get("pedido_id")
             itens = itens_pedido(pid)
             linhas = [f"• {i.get('description', 'Item')} — {money(i.get('totalAmount', 0))}" for i in itens]
-            return {"text": f"📦 Itens do pedido {pid}:\n" + "\n".join(linhas),
-                    "buttons": [{"label": "✅ Autorizar", "action": f"autorizar pedido {pid}"},
-                                {"label": "❌ Reprovar", "action": f"reprovar pedido {pid}"},
-                                {"label": "📄 PDF", "action": f"gerar pdf pedido {pid}"}]}
+            return {
+                "text": f"📦 Itens do pedido {pid}:\n" + "\n".join(linhas),
+                "buttons": [
+                    {"label": "✅ Autorizar", "action": f"autorizar pedido {pid}"},
+                    {"label": "❌ Reprovar", "action": f"reprovar pedido {pid}"},
+                    {"label": "📄 PDF", "action": f"gerar pdf pedido {pid}"},
+                ],
+            }
 
         if acao == "autorizar_pedido":
             return {"text": autorizar_pedido(parametros["pedido_id"])}
@@ -320,9 +323,11 @@ async def mensagem(msg: Message):
             pdf = gerar_relatorio_pdf_bytes(pid)
             if not pdf:
                 return {"text": "⚠️ Erro ao gerar PDF."}
-            return {"text": f"📄 PDF do pedido {pid} gerado com sucesso.",
-                    "pdf_base64": base64.b64encode(pdf).decode(),
-                    "filename": f"pedido_{pid}.pdf"}
+            return {
+                "text": f"📄 PDF do pedido {pid} gerado com sucesso.",
+                "pdf_base64": base64.b64encode(pdf).decode(),
+                "filename": f"pedido_{pid}.pdf",
+            }
 
         # ========================================================
         # 💰 FINANCEIRO / IA
@@ -346,9 +351,15 @@ async def mensagem(msg: Message):
             if df.empty:
                 return {"text": "⚠️ Sem dados para gerar relatório."}
             link = gerar_relatorio_gamma(df, dre, filtros, msg.user)
-            return {"text": f"🎬 Relatório Gamma (Dark Mode) gerado!\n\n[📊 Acessar Relatório]({link})", "buttons": menu_inicial}
+            return {
+                "text": f"🎬 Relatório Gamma (Dark Mode) gerado!\n\n[📊 Acessar Relatório]({link})",
+                "buttons": menu_inicial,
+            }
 
-        return {"text": "🤖 Não entendi. Dica: `empresa 1 2024-01-01 a 2024-12-31`", "buttons": menu_inicial}
+        return {
+            "text": "🤖 Não entendi. Dica: `empresa 1 2024-01-01 a 2024-12-31`",
+            "buttons": menu_inicial,
+        }
 
     except Exception as e:
         logging.exception("❌ Erro geral:")
@@ -376,7 +387,8 @@ async def webhook_twilio(
     <Message>{texto_resposta}</Message>
 </Response>"""
 
-    return PlainTextResponse(content=twiml, media_type="application/xml")
+    # 👇 aqui está a mudança importante pro Twilio interpretar
+    return PlainTextResponse(content=twiml, media_type="text/xml")
 
 # ============================================================
 # 🌐 TESTE FINANCEIRO
@@ -385,7 +397,10 @@ async def webhook_twilio(
 def teste_financeiro():
     filtros = {"startDate": "2024-01-01", "endDate": "2024-12-31", "enterpriseId": "1"}
     rel = gerar_relatorio_json(**filtros)
-    return {"resumo": rel.get("dre", {}).get("formatado", {}), "amostra": rel.get("todas_despesas", [])[:5]}
+    return {
+        "resumo": rel.get("dre", {}).get("formatado", {}),
+        "amostra": rel.get("todas_despesas", [])[:5],
+    }
 
 # ============================================================
 # 🌍 STATUS
