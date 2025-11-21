@@ -1,6 +1,7 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 import logging, re, base64, os
 import pandas as pd
@@ -14,8 +15,12 @@ from sienge.sienge_pedidos import (
     gerar_relatorio_pdf_bytes,
 )
 from sienge.sienge_boletos import buscar_boletos_por_cpf, gerar_link_boleto
-from sienge.sienge_financeiro import gerar_relatorio_json
-
+from sienge.sienge_financeiro import (
+    resumo_financeiro,
+    gastos_por_obra,
+    gastos_por_centro_custo,
+    gerar_relatorio_json,
+)
 from sienge.sienge_ia import gerar_analise_financeira
 from dashboard_financeiro import gerar_relatorio_gamma
 
@@ -296,6 +301,30 @@ async def mensagem(msg: Message):
     except Exception as e:
         logging.exception("❌ Erro geral:")
         return {"text": f"Ocorreu um erro: {e}", "buttons": menu_inicial}
+
+# ============================================================
+# 🤖 WEBHOOK WHATSAPP VIA TWILIO
+# ============================================================
+@app.post("/webhook-twilio", response_class=PlainTextResponse)
+async def webhook_twilio(
+    From: str = Form(...),   # Número do usuário no WhatsApp (ex: whatsapp:+5591...)
+    Body: str = Form(...),   # Texto da mensagem
+):
+    logging.info(f"📲 WhatsApp de {From}: {Body}")
+
+    # Reaproveita a lógica já existente do /mensagem
+    resposta_construia = await mensagem(
+        Message(user=From, text=Body)
+    )
+
+    texto_resposta = resposta_construia.get("text", "Constru.IA: não consegui gerar resposta.")
+
+    twiml = f"""<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Message>{texto_resposta}</Message>
+</Response>"""
+
+    return PlainTextResponse(content=twiml, media_type="application/xml")
 
 # ============================================================
 # 🌐 TESTE FINANCEIRO
