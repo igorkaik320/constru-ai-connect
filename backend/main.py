@@ -1,10 +1,11 @@
-from fastapi import FastAPI, Form
+from fastapi import FastAPI, Form, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 import logging, re, base64, os
 import pandas as pd
+import requests  # <-- para chamar a API do WhatsApp Cloud
 
 # Twilio
 from twilio.rest import Client
@@ -53,6 +54,17 @@ if TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN:
         logging.error(f"❌ Erro ao inicializar cliente Twilio: {e}")
 else:
     logging.warning("⚠️ TWILIO_ACCOUNT_SID ou TWILIO_AUTH_TOKEN não configurados.")
+
+# ============================================================
+# 🔐 CONFIG WHATSAPP CLOUD API (META)
+# ============================================================
+# Defina no Render:
+#   WHATSAPP_PHONE_NUMBER_ID = <Identificação do número de telefone>
+#   WHATSAPP_TOKEN = <Token gerado na Meta>
+#   WHATSAPP_VERIFY_TOKEN = construai123   (mesmo usado no painel da Meta)
+WHATSAPP_PHONE_NUMBER_ID = os.getenv("WHATSAPP_PHONE_NUMBER_ID")
+WHATSAPP_TOKEN = os.getenv("WHATSAPP_TOKEN")
+WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "construai123")
 
 # ============================================================
 # 📩 MODELOS DE DADOS
@@ -208,7 +220,7 @@ async def mensagem(msg: Message):
             return {
                 "text": "🧭 Filtros definidos.\n"
                         + (f"• Início: {atualizados.get('startDate')}\n" if atualizados.get("startDate") else "")
-                        + (f"• Fim: {atualizados.get('endDate')}\n" if atualizados.get("endDate") else "")
+                        + (f"• Fim: {atualizados.get("endDate")}\n" if atualizados.get("endDate") else "")
                         + (f"• Empresa: {atualizados.get('enterpriseId')}\n" if atualizados.get("enterpriseId") else ""),
                 "buttons": [
                     {"label": "📊 Resumo Financeiro", "action": "resumo_financeiro"},
@@ -384,6 +396,98 @@ async def mensagem(msg: Message):
     except Exception as e:
         logging.exception("❌ Erro geral:")
         return {"text": f"Ocorreu um erro: {e}", "buttons": menu_inicial}
+
+# ============================================================
+# 🌐 WEBHOOK WHATSAPP CLOUD API (VERIFICAÇÃO)
+# ============================================================
+@app.get("/webhook-whatsapp")
+async def verify_whatsapp(request: Request):
+    """
+    Endpoint de verificação do Meta (GET)
+    """
+    params = dict(request.query_params)
+    mode = params.get("hub.mode")
+    token = params.get("hub.verify_token")
+    challenge = params.get("hub.challenge")
+
+    if mode == "subscribe" and token == WHATSAPP_VERIFY_TOKEN:
+        logging.info("✅ Webhook WhatsApp verificado pelo Meta.")
+        return PlainTextResponse(challenge or "")
+    else:
+        logging.warning("⚠️ Webhook WhatsApp verificação falhou.")
+        return PlainTextResponse("Verification failed", status_code=403)
+
+# ============================================================
+# 💬 WEBHOOK WHATSAPP CLOUD API (RECEBIMENTO)
+# ============================================================
+def send_whatsapp_cloud_message(to_number: str, body: str):
+    """
+    Envia mensagem de texto usando WhatsApp Cloud API.
+    to_number: número sem 'whatsapp:', ex: 559193808761
+    """
+    if not (WHATSAPP_PHONE_NUMBER_ID and WHATSAPP_TOKEN):
+        logging.error("❌ WHATSAPP_PHONE_NUMBER_ID ou WHATSAPP_TOKEN não configurados.")
+        return
+
+    url = f"https://graph.facebook.com/v20.0/{WHATSAPP_PHONE_NUMBER_ID}/messages"
+    headers = {
+        "Authorization": f"Bearer {WHATSAPP_TOKEN}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": to_number,
+        "type": "text",
+        "text": {"body": body},
+    }
+
+    try:
+        resp = requests.post(url, headers=headers, json=payload)
+        logging.info(f"📤 Enviando mensagem Cloud API → {to_number}: {body}")
+        logging.info(f"Resposta Meta: {resp.status_code} - {resp.text}")
+    except Exception as e:
+        logging.error(f"❌ Erro ao enviar mensagem via Cloud API: {e}")
+
+@app.post("/webhook-whatsapp")
+async def webhook_whatsapp(request: Request):
+    """
+    Recebe mensagens do WhatsApp Cloud API (POST)
+    """
+    data = await request.json()
+    logging.info(f"📲 Webhook WhatsApp recebido: {data}")
+
+    try:
+        entry_list = data.get("entry", [])
+        if not entry_list:
+            return {"status": "no_entry"}
+
+        changes = entry_list[0].get("changes", [])
+        if not changes:
+            return {"status": "no_changes"}
+
+        value = changes[0].get("value", {})
+        messages = value.get("messages", [])
+        if not messages:
+            return {"status": "no_messages"}
+
+        msg = messages[0]
+        from_number = msg.get("from")             # ex: "559193808761"
+        text = msg.get("text", {}).get("body", "")
+
+        user_id = f"whatsapp:{from_number}"
+
+        # Usa a MESMA lógica do backend normal
+        resposta_construia = await mensagem(Message(user=user_id, text=text))
+        texto_resposta = resposta_construia.get("text", "Constru.IA: não consegui gerar resposta.")
+
+        # Envia resposta via Cloud API
+        send_whatsapp_cloud_message(from_number, texto_resposta)
+
+    except Exception as e:
+        logging.exception("❌ Erro ao processar webhook WhatsApp:")
+        return {"status": "error", "detail": str(e)}
+
+    return {"status": "ok"}
 
 # ============================================================
 # 🤖 WEBHOOK WHATSAPP VIA TWILIO
